@@ -5,6 +5,7 @@
 - Do not invent business rules.
 - If code conflicts with `MASTER_SPEC.md`, stop and document the conflict.
 - Treat institutional decisions marked "to confirm" as configuration/open decisions, not facts.
+- Documents in `docs/reference/`, including DOCX files, are non-normative. Never infer a business or architectural rule from them that contradicts `docs/MASTER_SPEC.md`.
 
 ## Architecture
 - Start as a modular monolith.
@@ -16,7 +17,7 @@
 - PostgreSQL is the transactional source of truth.
 - `Person` and `Account` are separate concepts.
 - Clerk provides identity/session only; ScoutHub owns roles, organization scopes and permissions.
-- Cloudflare Queues + Cron are the async primitives; never assume a permanent Node.js process.
+- Cloudflare Queues + Cron are the target async primitives from Slice 6; never assume a permanent Node.js process.
 - External platforms (Scouts for SDGs, ScoutPass, SIGERAS, etc.) use explicit integration ports.
 - Never scrape or depend on undocumented external APIs.
 
@@ -65,8 +66,8 @@ Forbidden examples:
 - Validate the OpenNext/Workers build on every PR.
 - Do not perform heavy PDF/image/CPU work synchronously in user requests.
 - Large files upload directly to R2 using short-lived signed URLs.
-- Use Queue consumers for asynchronous work.
-- Scheduled work uses Cron Triggers.
+- Use Queue consumers for asynchronous work only after the Slice 6 async foundation exists.
+- Scheduled work uses Cron Triggers only after the Slice 6 async foundation exists.
 - Database migrations run from CI/deployment jobs, not at Worker startup.
 
 ## Database

@@ -13,3 +13,5 @@ Planned activation:
 - Cloudflare Queues and Cron Triggers remain inactive until that custom Worker exists.
 
 Runtime variables and secrets for preview/production are supplied by Cloudflare. `DATABASE_URL` is always a secret and must not be committed or hardcoded in `wrangler.jsonc`.
+
+`apps/web/wrangler.jsonc` sets `keep_vars: true` so `opennextjs-cloudflare deploy` preserves runtime variables configured in Cloudflare. Local and test values come from uncommitted `.env` / `.env.development` files or CI service configuration; preview and production values are configured in Cloudflare, with secrets such as `DATABASE_URL` managed only as Cloudflare secrets.
