@@ -5,10 +5,11 @@
   "scripts": {
     "build": "next build",
     "build:workers": "opennextjs-cloudflare build",
-    "deploy": "opennextjs-cloudflare deploy",
+    "cf:typegen": "wrangler types",
+    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "dev": "next dev",
     "lint": "eslint .",
-    "preview": "opennextjs-cloudflare preview",
+    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
   },

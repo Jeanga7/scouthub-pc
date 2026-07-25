@@ -8,8 +8,8 @@ export default function PrivateAppPlaceholderPage() {
           <p className="eyebrow">Espace prive</p>
           <h1>Console ScoutHub</h1>
           <p>
-            Placeholder authentifie pour la Phase 0. Les modules metier seront
-            ajoutes dans les slices suivantes.
+            Espace prive - authentification prevue en Slice 2. Les modules
+            metier seront ajoutes dans les slices suivantes.
           </p>
         </section>
       </main>

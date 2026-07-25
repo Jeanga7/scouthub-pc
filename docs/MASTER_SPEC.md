@@ -1592,7 +1592,8 @@ scouthub/
 │       │   ├── (public)/          # pages publiques, jamais de données PII brutes
 │       │   ├── (console)/app/     # espace authentifié
 │       │   └── api/v1/            # Route Handlers REST
-│       └── worker/                # queue consumers / scheduled entrypoints si requis
+│       ├── worker/                # queue consumers / scheduled entrypoints si requis
+│       └── wrangler.jsonc         # configuration Cloudflare active
 ├── packages/
 │   ├── domain/                    # entités, value objects, règles métier
 │   ├── application/               # use-cases et ports
@@ -1623,7 +1624,6 @@ scouthub/
 │   └── local/
 ├── AGENTS.md
 ├── docker-compose.yml              # PostgreSQL local uniquement
-├── wrangler.jsonc
 ├── pnpm-workspace.yaml
 └── turbo.json
 ```
@@ -3572,4 +3572,3 @@ La valeur ultime n’est pas le nombre de fonctionnalités ; c’est la capacit�
 15. Membership seulement après décision SIGERAS.
 
 Le projet est suffisamment défini pour commencer le développement, à condition que Codex traite ce document comme **source de vérité fonctionnelle** et que les zones institutionnelles non décidées restent configurables plutôt que codées comme vérités définitives.
-
