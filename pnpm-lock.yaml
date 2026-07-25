@@ -47,6 +47,12 @@ importers:
       '@scouthub/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@scouthub/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@scouthub/infrastructure':
+        specifier: workspace:*
+        version: link:../../packages/infrastructure
       '@scouthub/observability':
         specifier: workspace:*
         version: link:../../packages/observability
@@ -125,6 +131,18 @@ importers:
       '@scouthub/application':
         specifier: workspace:*
         version: link:../application
+      '@scouthub/database':
+        specifier: workspace:*
+        version: link:../../database
+      '@scouthub/domain':
+        specifier: workspace:*
+        version: link:../domain
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(pg@8.22.0)
+      pg:
+        specifier: ^8.16.3
+        version: 8.22.0
 
   packages/observability: {}
 

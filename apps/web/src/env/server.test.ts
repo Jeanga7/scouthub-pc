@@ -6,9 +6,11 @@ describe("serverEnvSchema", () => {
     const parsed = serverEnvSchema.parse({
       APP_ENV: "local",
       DATABASE_URL: "postgres://scouthub:scouthub@localhost:5433/scouthub",
+      ENABLE_DEV_ADMIN: "false",
       NEXT_PUBLIC_APP_NAME: "ScoutHub Region"
     });
 
     expect(parsed.APP_ENV).toBe("local");
+    expect(parsed.ENABLE_DEV_ADMIN).toBe(false);
   });
 });

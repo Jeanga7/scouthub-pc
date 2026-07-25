@@ -11,3 +11,4 @@ export {
   type R2ObjectStorageBinding
 } from "./adapters/r2-object-storage";
 export type { DatabaseConnection } from "./database/connection";
+export { createPgOrganizationRepository } from "./database/organization-repository";

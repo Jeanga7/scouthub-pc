@@ -2,7 +2,7 @@ SHELL := /bin/sh
 
 .DEFAULT_GOAL := help
 
-.PHONY: help install dev db-up db-down db-ps db-logs migrate db-generate db-studio lint typecheck test build build-workers preview deploy cf-typegen check ci
+.PHONY: help install dev db-up db-down db-ps db-logs migrate db-seed-dev db-generate db-studio lint typecheck test test-integration build build-workers preview deploy cf-typegen check ci
 
 help:
 	@printf '%s\n' 'ScoutHub Region commands'
@@ -11,12 +11,14 @@ help:
 	@printf '%s\n' '  make install        Install pnpm dependencies'
 	@printf '%s\n' '  make db-up          Start local PostgreSQL on localhost:5433'
 	@printf '%s\n' '  make migrate        Apply Drizzle migrations'
+	@printf '%s\n' '  make db-seed-dev    Seed fictive local development data'
 	@printf '%s\n' '  make dev            Start the Next.js dev server'
 	@printf '%s\n' ''
 	@printf '%s\n' 'Quality gates:'
 	@printf '%s\n' '  make lint           Run ESLint and provider boundary check'
 	@printf '%s\n' '  make typecheck      Run TypeScript checks'
 	@printf '%s\n' '  make test           Run unit tests'
+	@printf '%s\n' '  make test-integration Run PostgreSQL integration tests'
 	@printf '%s\n' '  make build          Build all workspaces'
 	@printf '%s\n' '  make build-workers  Build OpenNext Cloudflare Workers bundle'
 	@printf '%s\n' '  make preview        Build and preview the Workers bundle'
@@ -53,6 +55,9 @@ db-logs:
 migrate:
 	pnpm db:migrate
 
+db-seed-dev:
+	pnpm db:seed:dev
+
 db-generate:
 	pnpm db:generate
 
@@ -67,6 +72,9 @@ typecheck:
 
 test:
 	pnpm test
+
+test-integration:
+	pnpm test:integration
 
 build:
 	pnpm build
@@ -85,4 +93,4 @@ cf-typegen:
 
 check: lint typecheck test build
 
-ci: check migrate build-workers
+ci: check migrate test-integration build-workers

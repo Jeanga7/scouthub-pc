@@ -9,10 +9,15 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "lint": "eslint .",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run --passWithNoTests --exclude \"src/**/*.integration.test.ts\"",
+    "test:integration": "vitest run --passWithNoTests src/database/organization-repository.integration.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@scouthub/application": "workspace:*"
+    "@scouthub/application": "workspace:*",
+    "@scouthub/database": "workspace:*",
+    "@scouthub/domain": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "pg": "^8.16.3"
   }
 }
