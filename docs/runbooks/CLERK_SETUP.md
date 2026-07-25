@@ -5,8 +5,8 @@ ScoutHub-PC uses Clerk for identity only. Business roles, scopes and permissions
 ## Manual Setup
 
 1. Create or select the Clerk application for ScoutHub-PC.
-2. Copy the Publishable Key into the Cloudflare runtime variable `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`.
-3. Store the Secret Key as the Cloudflare secret `CLERK_SECRET_KEY`.
+2. Provide the public `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` during `opennextjs-cloudflare build` for the targeted environment. Next.js embeds `NEXT_PUBLIC_*` values into the client bundle; this key is public but must match the Clerk environment being built.
+3. Store the Secret Key only as the Cloudflare runtime secret `CLERK_SECRET_KEY`.
 4. Set the sign-in URL to `/sign-in`.
 5. Set the sign-up URL to `/sign-up`.
 6. Configure allowed redirect URLs for the local, preview and production origins.
@@ -31,7 +31,8 @@ This value is not a permission. ScoutHub validates the local invitation and crea
 
 - `local`: `.env` is not committed; fake providers are used in tests.
 - `test`: no real Clerk network calls.
-- `preview`: runtime variables/secrets are configured in Cloudflare.
-- `production`: runtime variables/secrets are configured in Cloudflare, with `DATABASE_URL` and `CLERK_SECRET_KEY` stored as secrets.
+- `preview`: build-time `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is supplied for the preview Clerk application; runtime variables/secrets are configured in Cloudflare.
+- `production`: build-time `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is supplied for the production Clerk application; runtime variables/secrets are configured in Cloudflare, with `DATABASE_URL` and `CLERK_SECRET_KEY` stored as secrets.
 
 CI must not depend on a real Clerk account or live Clerk API.
+Never put `CLERK_SECRET_KEY` in a frontend build environment or committed file.

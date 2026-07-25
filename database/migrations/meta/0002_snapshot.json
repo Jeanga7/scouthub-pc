@@ -1,6 +1,6 @@
 {
-  "id": "4d565691-190c-4817-abe6-c0aa3764fed4",
-  "prevId": "e92ec6e8-ed01-4417-beab-f59cba004494",
+  "id": "4dc68a00-6ed2-4e83-be1d-fef19074c972",
+  "prevId": "4d565691-190c-4817-abe6-c0aa3764fed4",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -330,6 +330,23 @@
           "onDelete": "restrict",
           "onUpdate": "restrict"
         },
+        "account_invitation_account_person_link_fk": {
+          "name": "account_invitation_account_person_link_fk",
+          "tableFrom": "account_invitation",
+          "tableTo": "account_person_link",
+          "columnsFrom": [
+            "account_id",
+            "tenant_id",
+            "person_id"
+          ],
+          "columnsTo": [
+            "account_id",
+            "tenant_id",
+            "person_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "restrict"
+        },
         "account_invitation_person_fk": {
           "name": "account_invitation_person_fk",
           "tableFrom": "account_invitation",
@@ -542,6 +559,15 @@
           "name": "account_person_link_person_unique",
           "nullsNotDistinct": false,
           "columns": [
+            "person_id"
+          ]
+        },
+        "account_person_link_account_tenant_person_unique": {
+          "name": "account_person_link_account_tenant_person_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "account_id",
+            "tenant_id",
             "person_id"
           ]
         }

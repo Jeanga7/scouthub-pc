@@ -261,7 +261,13 @@ export class IdentityUseCases {
           );
           return invitation;
         } catch (error) {
-          await this.identityProvider.revokeInvitation(external.externalInvitationId);
+          try {
+            await this.identityProvider.revokeInvitation(external.externalInvitationId);
+          } catch {
+            // Clerk invitation creation and the DB pending transition are not
+            // atomic in Slice 2. Cleanup is best-effort and must never mask the
+            // original database failure; Slice 6 will add durable async repair.
+          }
           throw error;
         }
       });
@@ -356,7 +362,7 @@ export class IdentityUseCases {
       return [];
     }
     return this.repository.transaction((transaction) =>
-      transaction.listAccountsForScopes(tenantId, scopes)
+      transaction.listAccountsForScopes(tenantId, scopes, this.clock.now())
     );
   }
 
@@ -381,7 +387,7 @@ export class IdentityUseCases {
         reason: input.reason
       });
       if (revoked === null) {
-        throw new NotFoundError("Role assignment not found.");
+        throw new ConflictError("Role assignment cannot be revoked from its current state.");
       }
       await transaction.appendAuditEvent(
         createIdentityAuditEvent({
@@ -489,54 +495,6 @@ export class IdentityUseCases {
     return account;
   }
 
-  async bootstrapRegionalAdmin(input: {
-    readonly tenantId: string;
-    readonly regionOrganizationId: string;
-    readonly subjectId: string;
-    readonly email: string;
-    readonly firstName: string;
-    readonly lastName: string;
-    readonly requestId?: string;
-  }): Promise<ActorContext> {
-    const existingCount = await this.repository.transaction((transaction) =>
-      transaction.countActiveRegionalAdmins(
-        input.tenantId,
-        input.regionOrganizationId,
-        this.clock.now()
-      )
-    );
-    if (existingCount > 0) {
-      throw new ConflictError("A Regional Admin already exists for this region.");
-    }
-
-    return this.repository.transaction(async (transaction) => {
-      const actor = await transaction.bootstrapRegionalAdmin({
-        tenantId: input.tenantId,
-        regionOrganizationId: input.regionOrganizationId,
-        subjectId: input.subjectId,
-        email: input.email.trim().toLowerCase(),
-        firstName: input.firstName,
-        lastName: input.lastName,
-        ids: {
-          accountId: this.ids.generate(),
-          personId: this.ids.generate(),
-          roleAssignmentId: this.ids.generate()
-        }
-      });
-      await transaction.appendAuditEvent(
-        createIdentityAuditEvent({
-          id: this.ids.generate(),
-          tenantId: input.tenantId,
-          resourceType: "role_assignment",
-          resourceId: actor.account.id,
-          action: "identity.role_assigned",
-          metadata: { role: "REGIONAL_ADMIN", bootstrap: true },
-          requestId: input.requestId
-        })
-      );
-      return actor;
-    });
-  }
 }
 
 function assertRoleScope(roleCode: RoleCode, scope: ScopedOrganizationResource): RoleScopeType {

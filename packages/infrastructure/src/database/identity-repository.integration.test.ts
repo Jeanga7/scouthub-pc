@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import pg from "pg";
 import {
+  ConflictError,
   FakeIdentityProvider,
   IdentityUseCases,
   OrganizationUseCases,
+  type ActorContext,
   type Clock,
   type IdGenerator
 } from "@scouthub/application";
@@ -47,43 +49,32 @@ describe("PgIdentityRepository", () => {
     }
   });
 
-  it("bootstraps, invites and provisions an adult account idempotently", async () => {
+  it("invites and provisions an adult account idempotently", async () => {
     await createOrganizations();
     const fakeIdentity = new FakeIdentityProvider();
     const useCases = createIdentityUseCases(fakeIdentity, [
-      ids.adminAccount,
-      ids.adminPerson,
-      ids.adminAssignment,
-      auditId(1),
       ids.invitedAccount,
       ids.invitedPerson,
       ids.invitation,
+      auditId(1),
       auditId(2),
-      auditId(3),
       ids.acceptedAssignment,
-      auditId(4),
-      auditId(5)
+      auditId(3),
+      auditId(4)
     ]);
 
-    const admin = await useCases.bootstrapRegionalAdmin({
+    const admin = await createRegionalAdminFixture(useCases, {
       tenantId: ids.tenant,
       regionOrganizationId: ids.region,
       subjectId: "user_admin",
       email: "admin@example.test",
       firstName: "Awa",
-      lastName: "Ndiaye"
+      lastName: "Ndiaye",
+      accountId: ids.adminAccount,
+      personId: ids.adminPerson,
+      assignmentId: ids.adminAssignment
     });
     expect(admin.account.status).toBe("ACTIVE");
-    await expect(
-      useCases.bootstrapRegionalAdmin({
-        tenantId: ids.tenant,
-        regionOrganizationId: ids.region,
-        subjectId: "user_admin_2",
-        email: "admin2@example.test",
-        firstName: "Moussa",
-        lastName: "Fall"
-      })
-    ).rejects.toThrow("already exists");
 
     const invitation = await useCases.inviteAdultUser({
       actor: admin,
@@ -134,23 +125,22 @@ describe("PgIdentityRepository", () => {
     const fakeIdentity = new FakeIdentityProvider();
     fakeIdentity.failInvitationFor("failed@example.test");
     const useCases = createIdentityUseCases(fakeIdentity, [
-      ids.adminAccount,
-      ids.adminPerson,
-      ids.adminAssignment,
-      auditId(1),
       ids.invitedAccount,
       ids.invitedPerson,
       ids.invitation,
-      auditId(2),
-      auditId(3)
+      auditId(1),
+      auditId(2)
     ]);
-    const admin = await useCases.bootstrapRegionalAdmin({
+    const admin = await createRegionalAdminFixture(useCases, {
       tenantId: ids.tenant,
       regionOrganizationId: ids.region,
       subjectId: "user_admin",
       email: "admin@example.test",
       firstName: "Awa",
-      lastName: "Ndiaye"
+      lastName: "Ndiaye",
+      accountId: ids.adminAccount,
+      personId: ids.adminPerson,
+      assignmentId: ids.adminAssignment
     });
 
     await expect(
@@ -186,19 +176,17 @@ describe("PgIdentityRepository", () => {
   it("denies a suspended account even when the provider session is still valid", async () => {
     await createOrganizations();
     const fakeIdentity = new FakeIdentityProvider();
-    const useCases = createIdentityUseCases(fakeIdentity, [
-      ids.adminAccount,
-      ids.adminPerson,
-      ids.adminAssignment,
-      auditId(1)
-    ]);
-    const admin = await useCases.bootstrapRegionalAdmin({
+    const useCases = createIdentityUseCases(fakeIdentity, []);
+    const admin = await createRegionalAdminFixture(useCases, {
       tenantId: ids.tenant,
       regionOrganizationId: ids.region,
       subjectId: "user_admin",
       email: "admin@example.test",
       firstName: "Awa",
-      lastName: "Ndiaye"
+      lastName: "Ndiaye",
+      accountId: ids.adminAccount,
+      personId: ids.adminPerson,
+      assignmentId: ids.adminAssignment
     });
     await expect(
       useCases.suspendAccount({
@@ -212,27 +200,28 @@ describe("PgIdentityRepository", () => {
   it("does not treat a RegionalAdmin region scope as tenant-wide", async () => {
     await createOrganizations();
     const fakeIdentity = new FakeIdentityProvider();
-    const useCases = createIdentityUseCases(fakeIdentity, [
-      ids.adminAccount,
-      ids.adminPerson,
-      ids.adminAssignment,
-      auditId(1)
-    ]);
-    const adminA = await useCases.bootstrapRegionalAdmin({
+    const useCases = createIdentityUseCases(fakeIdentity, []);
+    const adminA = await createRegionalAdminFixture(useCases, {
       tenantId: ids.tenant,
       regionOrganizationId: ids.region,
       subjectId: "user_admin_a",
       email: "admin-a@example.test",
       firstName: "Awa",
-      lastName: "Ndiaye"
+      lastName: "Ndiaye",
+      accountId: ids.adminAccount,
+      personId: ids.adminPerson,
+      assignmentId: ids.adminAssignment
     });
-    const adminB = await useCases.bootstrapRegionalAdmin({
+    const adminB = await createRegionalAdminFixture(useCases, {
       tenantId: ids.tenant,
       regionOrganizationId: ids.regionB,
       subjectId: "user_admin_b",
       email: "admin-b@example.test",
       firstName: "Binta",
-      lastName: "Sarr"
+      lastName: "Sarr",
+      accountId: crypto.randomUUID(),
+      personId: crypto.randomUUID(),
+      assignmentId: crypto.randomUUID()
     });
 
     const regionBInvitation = await useCases.inviteAdultUser({
@@ -277,7 +266,232 @@ describe("PgIdentityRepository", () => {
     expect(visibleInvitations.map((invitation) => invitation.id)).not.toContain(regionBInvitation.id);
     expect(visibleAssignments.map((assignment) => assignment.accountId)).not.toContain(adminB.account.id);
   });
+
+  it("projects account administration data only within visible tenant and scope", async () => {
+    await createOrganizations();
+    const fakeIdentity = new FakeIdentityProvider();
+    const useCases = createIdentityUseCases(fakeIdentity, []);
+    const adminA = await createRegionalAdminFixture(useCases, {
+      tenantId: ids.tenant,
+      regionOrganizationId: ids.region,
+      subjectId: "user_admin_a",
+      email: "admin-a@example.test",
+      firstName: "Awa",
+      lastName: "Ndiaye",
+      accountId: ids.adminAccount,
+      personId: ids.adminPerson,
+      assignmentId: ids.adminAssignment
+    });
+
+    const visibleAccountId = crypto.randomUUID();
+    await insertAccountWithRoles({
+      accountId: visibleAccountId,
+      primaryEmail: "multi@example.test",
+      tenantId: ids.tenant,
+      personId: crypto.randomUUID(),
+      displayName: "Visible Tenant Person",
+      assignments: [
+        { roleCode: "GROUP_ADMIN", scopeType: "GROUP", scopeOrgId: ids.groupA, startsAt: clock.now(), endsAt: null },
+        { roleCode: "GROUP_ADMIN", scopeType: "GROUP", scopeOrgId: ids.groupB, startsAt: clock.now(), endsAt: null }
+      ]
+    });
+
+    const hiddenAccountId = crypto.randomUUID();
+    await insertAccountWithRoles({
+      accountId: hiddenAccountId,
+      primaryEmail: "hidden@example.test",
+      tenantId: ids.tenant,
+      personId: crypto.randomUUID(),
+      displayName: "Hidden Region Person",
+      assignments: [
+        {
+          roleCode: "GROUP_ADMIN",
+          scopeType: "GROUP",
+          scopeOrgId: ids.groupA,
+          startsAt: new Date("2020-01-01T00:00:00.000Z"),
+          endsAt: new Date("2020-02-01T00:00:00.000Z")
+        },
+        { roleCode: "GROUP_ADMIN", scopeType: "GROUP", scopeOrgId: ids.groupB, startsAt: clock.now(), endsAt: null }
+      ]
+    });
+
+    const accounts = await useCases.listAccounts(adminA, ids.tenant);
+    const visible = accounts.find((entry) => entry.account.id === visibleAccountId);
+    expect(visible?.person?.tenantId).toBe(ids.tenant);
+    expect(visible?.person?.displayName).toBe("Visible Tenant Person");
+    expect(visible?.assignments.map((assignment) => assignment.scopeOrgId)).toEqual([ids.groupA]);
+    expect(accounts.map((entry) => entry.account.id)).not.toContain(hiddenAccountId);
+  });
+
+  it("serializes and applies the last RegionalAdmin guard to role revocation", async () => {
+    await createOrganizations();
+    const fakeIdentity = new FakeIdentityProvider();
+    const useCases = createIdentityUseCases(fakeIdentity, [auditId(1), auditId(2)]);
+    const adminA = await createRegionalAdminFixture(useCases, {
+      tenantId: ids.tenant,
+      regionOrganizationId: ids.region,
+      subjectId: "user_admin_a",
+      email: "admin-a@example.test",
+      firstName: "Awa",
+      lastName: "Ndiaye",
+      accountId: ids.adminAccount,
+      personId: ids.adminPerson,
+      assignmentId: ids.adminAssignment
+    });
+
+    await expect(
+      useCases.revokeRoleAssignment({
+        actor: adminA,
+        tenantId: ids.tenant,
+        roleAssignmentId: ids.adminAssignment,
+        reason: "test"
+      })
+    ).rejects.toThrow("last active Regional Admin");
+
+    const second = await createRegionalAdminFixture(useCases, {
+      tenantId: ids.tenant,
+      regionOrganizationId: ids.region,
+      subjectId: "user_admin_2",
+      email: "admin2@example.test",
+      firstName: "Moussa",
+      lastName: "Fall",
+      accountId: crypto.randomUUID(),
+      personId: crypto.randomUUID(),
+      assignmentId: crypto.randomUUID()
+    });
+    const revoked = await useCases.revokeRoleAssignment({
+      actor: adminA,
+      tenantId: ids.tenant,
+      roleAssignmentId: second.assignments[0]?.id ?? "",
+      reason: "test"
+    });
+    expect(revoked.revokedAt).not.toBeNull();
+    await expect(
+      useCases.revokeRoleAssignment({
+        actor: adminA,
+        tenantId: ids.tenant,
+        roleAssignmentId: revoked.id,
+        reason: "second"
+      })
+    ).rejects.toBeInstanceOf(ConflictError);
+    expect(await auditCount("identity.role_revoked", revoked.id)).toBe(1);
+  });
 });
+
+async function createRegionalAdminFixture(
+  useCases: IdentityUseCases,
+  input: {
+    readonly tenantId: string;
+    readonly regionOrganizationId: string;
+    readonly subjectId: string;
+    readonly email: string;
+    readonly firstName: string;
+    readonly lastName: string;
+    readonly accountId: string;
+    readonly personId: string;
+    readonly assignmentId: string;
+  }
+): Promise<ActorContext> {
+  await insertAccountWithRoles({
+    accountId: input.accountId,
+    primaryEmail: input.email,
+    externalIdentityId: input.subjectId,
+    tenantId: input.tenantId,
+    personId: input.personId,
+    displayName: `${input.firstName} ${input.lastName}`,
+    assignments: [
+      {
+        id: input.assignmentId,
+        roleCode: "REGIONAL_ADMIN",
+        scopeOrgId: input.regionOrganizationId,
+        startsAt: new Date(Date.now() - 1_000),
+        endsAt: null
+      }
+    ]
+  });
+  return useCases.ensureProvisionedAccount({
+    session: {
+      sessionId: `sess_${input.subjectId}`,
+      subjectId: input.subjectId,
+      assuranceLevel: "standard",
+      issuedAt: clock.now(),
+      expiresAt: new Date(Date.now() + 3_600_000)
+    }
+  });
+}
+
+async function insertAccountWithRoles(input: {
+  readonly accountId: string;
+  readonly primaryEmail: string;
+  readonly externalIdentityId?: string;
+  readonly tenantId: string;
+  readonly personId: string;
+  readonly displayName: string;
+    readonly assignments: readonly {
+    readonly id?: string;
+    readonly roleCode: string;
+    readonly scopeType?: string;
+    readonly scopeOrgId: string;
+    readonly startsAt: Date;
+    readonly endsAt: Date | null;
+  }[];
+}): Promise<void> {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  try {
+    await pool.query(
+      `INSERT INTO account (id, external_identity_id, primary_email, status, email_verified_at)
+       VALUES ($1, $2, $3, 'ACTIVE', now())`,
+      [input.accountId, input.externalIdentityId ?? null, input.primaryEmail]
+    );
+    await pool.query(
+      `INSERT INTO person (id, tenant_id, first_name, last_name, display_name)
+       VALUES ($1, $2, 'Test', 'User', $3)`,
+      [input.personId, input.tenantId, input.displayName]
+    );
+    await pool.query(
+      "INSERT INTO account_person_link (account_id, tenant_id, person_id) VALUES ($1, $2, $3)",
+      [input.accountId, input.tenantId, input.personId]
+    );
+    for (const assignment of input.assignments) {
+      const role = await pool.query<{ id: string }>(
+        "SELECT id FROM role_definition WHERE code = $1",
+        [assignment.roleCode]
+      );
+      await pool.query(
+        `INSERT INTO role_assignment (
+          id, tenant_id, account_id, role_id, scope_type, scope_org_id,
+          starts_at, ends_at, granted_by_account_id
+        )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $3)`,
+        [
+          assignment.id ?? crypto.randomUUID(),
+          input.tenantId,
+          input.accountId,
+          role.rows[0]?.id,
+          assignment.scopeType ?? "REGION",
+          assignment.scopeOrgId,
+          assignment.startsAt,
+          assignment.endsAt
+        ]
+      );
+    }
+  } finally {
+    await pool.end();
+  }
+}
+
+async function auditCount(action: string, resourceId: string): Promise<number> {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  try {
+    const rows = await pool.query<{ count: number }>(
+      "SELECT count(*)::int AS count FROM audit_event WHERE action = $1 AND resource_id = $2",
+      [action, resourceId]
+    );
+    return rows.rows[0]?.count ?? 0;
+  } finally {
+    await pool.end();
+  }
+}
 
 async function createOrganizations(): Promise<void> {
   const orgUseCases = new OrganizationUseCases(

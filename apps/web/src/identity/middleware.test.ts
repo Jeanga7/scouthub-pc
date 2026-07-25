@@ -23,4 +23,21 @@ describe("Clerk middleware configuration", () => {
       })
     ).toEqual(["http://localhost:3000"]);
   });
+
+  it("falls back to APP_ORIGIN when CLERK_AUTHORIZED_PARTIES is empty", () => {
+    expect(
+      authorizedPartiesFromEnv({
+        APP_ORIGIN: "https://scouthub-pc.example.test",
+        CLERK_AUTHORIZED_PARTIES: ""
+      })
+    ).toEqual(["https://scouthub-pc.example.test"]);
+  });
+
+  it("rejects invalid origins", () => {
+    expect(() =>
+      authorizedPartiesFromEnv({
+        CLERK_AUTHORIZED_PARTIES: "not-an-origin"
+      })
+    ).toThrow("Invalid Clerk authorized party origin");
+  });
 });

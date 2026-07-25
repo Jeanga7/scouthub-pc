@@ -103,27 +103,6 @@ export function canAccessScopedAction(
   return deny("NO_MATCHING_ACTIVE_ASSIGNMENT");
 }
 
-export function canPerformTenantAction(
-  actor: Actor,
-  action: PermissionCode,
-  tenantId: string,
-  context: PolicyContext
-): AuthorizationDecision {
-  if (actor.account.status !== "ACTIVE") {
-    return deny(actor.account.status === "SUSPENDED" ? "ACCOUNT_SUSPENDED" : "ACCOUNT_NOT_ACTIVE");
-  }
-
-  const matched = actor.assignments.some(
-    (assignment) =>
-      isRoleAssignmentActive(assignment, context.now) &&
-      assignment.tenantId === tenantId &&
-      assignment.permissions.includes(action) &&
-      assignment.roleCode !== "PLATFORM_ADMIN"
-  );
-
-  return matched ? allow("TENANT_PERMISSION") : deny("NO_TENANT_PERMISSION");
-}
-
 export function validateSlice2RoleScope(input: {
   readonly roleCode: RoleAssignment["roleCode"];
   readonly organizationType: OrganizationType;

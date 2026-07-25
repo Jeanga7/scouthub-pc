@@ -42,7 +42,8 @@ CREATE TABLE "account_person_link" (
 	"person_id" uuid NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "account_person_link_account_id_tenant_id_pk" PRIMARY KEY("account_id","tenant_id"),
-	CONSTRAINT "account_person_link_person_unique" UNIQUE("person_id")
+	CONSTRAINT "account_person_link_person_unique" UNIQUE("person_id"),
+	CONSTRAINT "account_person_link_account_tenant_person_unique" UNIQUE("account_id","tenant_id","person_id")
 );
 --> statement-breakpoint
 CREATE TABLE "permission_definition" (
@@ -111,6 +112,7 @@ CREATE TABLE "role_permission" (
 ALTER TABLE "account_invitation" ADD CONSTRAINT "account_invitation_tenant_fk" FOREIGN KEY ("tenant_id") REFERENCES "public"."organization"("id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
 ALTER TABLE "account_invitation" ADD CONSTRAINT "account_invitation_account_fk" FOREIGN KEY ("account_id") REFERENCES "public"."account"("id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
 ALTER TABLE "account_invitation" ADD CONSTRAINT "account_invitation_account_tenant_fk" FOREIGN KEY ("account_id","tenant_id") REFERENCES "public"."account_person_link"("account_id","tenant_id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
+ALTER TABLE "account_invitation" ADD CONSTRAINT "account_invitation_account_person_link_fk" FOREIGN KEY ("account_id","tenant_id","person_id") REFERENCES "public"."account_person_link"("account_id","tenant_id","person_id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
 ALTER TABLE "account_invitation" ADD CONSTRAINT "account_invitation_person_fk" FOREIGN KEY ("person_id") REFERENCES "public"."person"("id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
 ALTER TABLE "account_invitation" ADD CONSTRAINT "account_invitation_person_tenant_fk" FOREIGN KEY ("person_id","tenant_id") REFERENCES "public"."person"("id","tenant_id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
 ALTER TABLE "account_invitation" ADD CONSTRAINT "account_invitation_intended_role_fk" FOREIGN KEY ("intended_role_id") REFERENCES "public"."role_definition"("id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint

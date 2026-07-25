@@ -254,6 +254,11 @@ export const accountPersonLink = pgTable(
   (table) => [
     primaryKey({ columns: [table.accountId, table.tenantId] }),
     unique("account_person_link_person_unique").on(table.personId),
+    unique("account_person_link_account_tenant_person_unique").on(
+      table.accountId,
+      table.tenantId,
+      table.personId
+    ),
     foreignKey({
       columns: [table.accountId],
       foreignColumns: [account.id],
@@ -453,6 +458,15 @@ export const accountInvitation = pgTable(
       columns: [table.accountId, table.tenantId],
       foreignColumns: [accountPersonLink.accountId, accountPersonLink.tenantId],
       name: "account_invitation_account_tenant_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    foreignKey({
+      columns: [table.accountId, table.tenantId, table.personId],
+      foreignColumns: [
+        accountPersonLink.accountId,
+        accountPersonLink.tenantId,
+        accountPersonLink.personId
+      ],
+      name: "account_invitation_account_person_link_fk"
     }).onDelete("restrict").onUpdate("restrict"),
     foreignKey({
       columns: [table.personId],

@@ -43,7 +43,6 @@ export { OrganizationUseCases, type IdGenerator } from "./organization/use-cases
 export type {
   ActorContext,
   AccountAdministrationView,
-  BootstrapRegionalAdminInput,
   CreateRoleAssignmentInput,
   CreatedInvitationDraft,
   IdentityRepository,

@@ -52,20 +52,6 @@ export interface AccountAdministrationView {
   readonly assignments: readonly RoleAssignment[];
 }
 
-export interface BootstrapRegionalAdminInput {
-  readonly tenantId: string;
-  readonly regionOrganizationId: string;
-  readonly subjectId: string;
-  readonly email: string;
-  readonly firstName: string;
-  readonly lastName: string;
-  readonly ids: {
-    readonly accountId: string;
-    readonly personId: string;
-    readonly roleAssignmentId: string;
-  };
-}
-
 export interface CreateRoleAssignmentInput {
   readonly id: string;
   readonly tenantId: string;
@@ -122,10 +108,19 @@ export interface IdentityTransaction {
     readonly tenantId: string;
     readonly accountId: string;
   }): Promise<Account | null>;
-  listAccountsForScopes(tenantId: string, scopePaths: readonly string[]): Promise<AccountAdministrationView[]>;
+  listAccountsForScopes(
+    tenantId: string,
+    scopePaths: readonly string[],
+    now: Date
+  ): Promise<AccountAdministrationView[]>;
+  findAccountAdministrationView(
+    tenantId: string,
+    accountId: string,
+    scopePaths: readonly string[],
+    now: Date
+  ): Promise<AccountAdministrationView | null>;
   findAccountAdministrationViewForUpdate(accountId: string): Promise<AccountAdministrationView | null>;
   countActiveRegionalAdmins(tenantId: string, regionOrganizationId: string, now: Date): Promise<number>;
-  bootstrapRegionalAdmin(input: BootstrapRegionalAdminInput): Promise<ActorContext>;
   findOrganizationResource(tenantId: string, organizationId: string): Promise<ScopedOrganizationResource | null>;
   getRolePermissions(roleCode: RoleCode): Promise<readonly PermissionCode[]>;
   appendAuditEvent(input: AuditEventInput): Promise<void>;

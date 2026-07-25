@@ -23,15 +23,26 @@ export function AccessConsole({
   initialAccounts
 }: Props) {
   const [message, setMessage] = useState("Ready");
+  const [busy, setBusy] = useState(false);
 
   async function postJson(path: string, payload: unknown) {
-    const response = await fetch(path, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    const body = (await response.json()) as { detail?: string };
-    setMessage(response.ok ? "Saved" : (body.detail ?? "Request failed."));
+    setBusy(true);
+    try {
+      const response = await fetch(path, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const body = (await response.json()) as { detail?: string };
+      if (!response.ok) {
+        setMessage(body.detail ?? "Request failed.");
+        return;
+      }
+      setMessage("Saved");
+      window.location.reload();
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -39,7 +50,7 @@ export function AccessConsole({
       <section className="panel">
         <p className="eyebrow">Access admin</p>
         <h1>Invitations et roles</h1>
-        <p>{message}</p>
+        <p aria-live="polite">{busy ? "Traitement..." : message}</p>
       </section>
 
       <form
@@ -91,7 +102,54 @@ export function AccessConsole({
           <input name="adultEligibilityConfirmed" type="checkbox" required />
           Eligibilite adulte attestee
         </label>
-        <button type="submit">Envoyer invitation</button>
+        <button type="submit" disabled={busy}>Envoyer invitation</button>
+      </form>
+
+      <form
+        className="panel org-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const data = new FormData(event.currentTarget);
+          void postJson("/api/v1/role-assignments", {
+            tenantId,
+            accountId: data.get("accountId"),
+            roleCode: data.get("roleCode"),
+            scopeOrgId: data.get("scopeOrgId"),
+            startsAt: dateTimeLocalToIso(data.get("startsAt")),
+            endsAt: data.get("endsAt") === "" ? null : dateTimeLocalToIso(data.get("endsAt"))
+          });
+        }}
+      >
+        <h2>Assigner un role</h2>
+        <label>
+          Account
+          <input name="accountId" required />
+        </label>
+        <label>
+          Role
+          <select name="roleCode" defaultValue="GROUP_ADMIN">
+            <option value="UNIT_LEADER">Unit leader</option>
+            <option value="GROUP_ADMIN">Group admin</option>
+            <option value="DISTRICT_REVIEWER">District reviewer</option>
+            <option value="REGIONAL_PROGRAMME_REVIEWER">Regional programme reviewer</option>
+            <option value="REGIONAL_ADMIN">Regional admin</option>
+            <option value="REGIONAL_COMMS">Regional comms</option>
+            <option value="DATA_OFFICER">Data officer</option>
+          </select>
+        </label>
+        <label>
+          Scope organization
+          <input name="scopeOrgId" defaultValue={scopeOrgId} required />
+        </label>
+        <label>
+          Debut
+          <input name="startsAt" type="datetime-local" required />
+        </label>
+        <label>
+          Fin optionnelle
+          <input name="endsAt" type="datetime-local" />
+        </label>
+        <button type="submit" disabled={busy}>Assigner role</button>
       </form>
 
       <section className="panel">
@@ -100,6 +158,17 @@ export function AccessConsole({
           {initialInvitations.map((invitation) => (
             <li key={invitation.id}>
               {invitation.email} · {invitation.intendedRoleCode} · {invitation.status}
+              {invitation.status === "PENDING" ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    void postJson(`/api/v1/invitations/${invitation.id}/revoke`, { tenantId })
+                  }
+                >
+                  Revoke
+                </button>
+              ) : null}
             </li>
           ))}
         </ul>
@@ -111,6 +180,20 @@ export function AccessConsole({
           {initialRoleAssignments.map((assignment) => (
             <li key={assignment.id}>
               {assignment.accountId} · {assignment.roleCode} · {assignment.scopeType}
+              {assignment.revokedAt === null ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    void postJson(`/api/v1/role-assignments/${assignment.id}/revoke`, {
+                      tenantId,
+                      reason: "Revoked from access admin console"
+                    })
+                  }
+                >
+                  Revoke role
+                </button>
+              ) : null}
             </li>
           ))}
         </ul>
@@ -122,10 +205,31 @@ export function AccessConsole({
           {initialAccounts.map((entry) => (
             <li key={entry.account.id}>
               {entry.person?.displayName ?? entry.account.id} · {entry.account.primaryEmail} · {entry.account.status}
+              <span>
+                {" "}· roles: {entry.activeRoleAssignments.map((assignment) => assignment.roleCode).join(", ")}
+              </span>
+              {entry.account.status === "ACTIVE" ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    void postJson(`/api/v1/accounts/${entry.account.id}/suspend`, { tenantId })
+                  }
+                >
+                  Suspend account
+                </button>
+              ) : null}
             </li>
           ))}
         </ul>
       </section>
     </div>
   );
+}
+
+function dateTimeLocalToIso(value: FormDataEntryValue | null): string {
+  if (typeof value !== "string") {
+    throw new Error("Expected date-time form value.");
+  }
+  return new Date(value).toISOString();
 }

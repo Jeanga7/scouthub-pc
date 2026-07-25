@@ -14,7 +14,6 @@ import type {
 import type {
   ActorContext,
   AccountAdministrationView,
-  BootstrapRegionalAdminInput,
   CreateRoleAssignmentInput,
   CreatedInvitationDraft,
   IdentityRepository,
@@ -421,20 +420,28 @@ class PgIdentityTransaction implements IdentityTransaction {
     const target = await this.findRoleAssignmentForUpdate(input.tenantId, input.roleAssignmentId);
     if (
       target?.roleCode === "REGIONAL_ADMIN" &&
-      target.revokedAt === null &&
       target.scopeOrgId !== null
     ) {
-      const admins = await this.countActiveRegionalAdmins(input.tenantId, target.scopeOrgId, new Date());
-      if (admins <= 1) {
-        throw new ConflictError("Cannot revoke the last active Regional Admin for this region.");
+      // The "last RegionalAdmin" invariant is serialized on the Region row so
+      // concurrent revocations cannot both observe count=2 and leave the region
+      // without an administrator.
+      await this.lockRegion(input.tenantId, target.scopeOrgId);
+      if (await this.isActiveRegionalAdminAssignmentForActiveAccount(input.tenantId, target.id, new Date())) {
+        const admins = await this.countActiveRegionalAdmins(input.tenantId, target.scopeOrgId, new Date());
+        if (admins <= 1) {
+          throw new ConflictError("Cannot revoke the last active Regional Admin for this region.");
+        }
       }
     }
-    await this.db.query(
+    const result = await this.db.query(
       `UPDATE role_assignment
        SET revoked_at = now(), revoked_by_account_id = $3, revocation_reason = $4
        WHERE tenant_id = $1 AND id = $2 AND revoked_at IS NULL`,
       [input.tenantId, input.roleAssignmentId, input.revokedByAccountId, input.reason]
     );
+    if (result.rowCount !== 1) {
+      return null;
+    }
     const rows = await this.db.query<AssignmentRow>(assignmentSql("ra.id = $1"), [
       input.roleAssignmentId
     ]);
@@ -445,14 +452,20 @@ class PgIdentityTransaction implements IdentityTransaction {
     readonly tenantId: string;
     readonly accountId: string;
   }): Promise<Account | null> {
-    const regionalAdminScopes = await this.activeRegionalAdminScopesForAccount(
-      input.tenantId,
-      input.accountId
-    );
-    for (const regionOrganizationId of regionalAdminScopes) {
-      const admins = await this.countActiveRegionalAdmins(input.tenantId, regionOrganizationId, new Date());
-      if (admins <= 1) {
-        throw new ConflictError("Cannot suspend the last active Regional Admin.");
+    const targetAccount = await this.findAccountById(input.accountId);
+    if (targetAccount?.status === "ACTIVE") {
+      const regionalAdminScopes = await this.activeRegionalAdminScopesForAccount(
+        input.tenantId,
+        input.accountId
+      );
+      for (const regionOrganizationId of regionalAdminScopes) {
+        // Account suspension is global, so removing a RegionalAdmin's effective
+        // access must hold the same per-region lock as role revocation.
+        await this.lockRegion(input.tenantId, regionOrganizationId);
+        const admins = await this.countActiveRegionalAdmins(input.tenantId, regionOrganizationId, new Date());
+        if (admins <= 1) {
+          throw new ConflictError("Cannot suspend the last active Regional Admin.");
+        }
       }
     }
     const rows = await this.db.query<AccountRow>(
@@ -489,49 +502,6 @@ class PgIdentityTransaction implements IdentityTransaction {
       [tenantId, regionOrganizationId, now]
     );
     return rows.rows[0]?.count ?? 0;
-  }
-
-  async bootstrapRegionalAdmin(
-    input: BootstrapRegionalAdminInput
-  ): Promise<ActorContext> {
-    const role = await this.findRoleId("REGIONAL_ADMIN");
-    const displayName = `${input.firstName.trim()} ${input.lastName.trim()}`.trim();
-    await this.db.query(
-      `INSERT INTO person (id, tenant_id, first_name, last_name, display_name)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [input.ids.personId, input.tenantId, input.firstName.trim(), input.lastName.trim(), displayName]
-    );
-    await this.db.query(
-      `INSERT INTO account (
-        id, external_identity_id, primary_email, status, email_verified_at
-      )
-       VALUES ($1, $2, $3, 'ACTIVE', now())`,
-      [input.ids.accountId, input.subjectId, input.email]
-    );
-    await this.db.query(
-      `INSERT INTO account_person_link (account_id, tenant_id, person_id)
-       VALUES ($1, $2, $3)`,
-      [input.ids.accountId, input.tenantId, input.ids.personId]
-    );
-    await this.db.query(
-      `INSERT INTO role_assignment (
-        id, tenant_id, account_id, role_id, scope_type, scope_org_id,
-        starts_at, granted_by_account_id
-      )
-       VALUES ($1, $2, $3, $4, 'REGION', $5, now(), $3)`,
-      [
-        input.ids.roleAssignmentId,
-        input.tenantId,
-        input.ids.accountId,
-        role.id,
-        input.regionOrganizationId
-      ]
-    );
-    const actor = await this.findActorBySubject(input.subjectId);
-    if (actor === null) {
-      throw new Error("Expected bootstrapped actor.");
-    }
-    return actor;
   }
 
   async findOrganizationResource(
@@ -590,7 +560,8 @@ class PgIdentityTransaction implements IdentityTransaction {
 
   async listAccountsForScopes(
     tenantId: string,
-    scopePaths: readonly string[]
+    scopePaths: readonly string[],
+    now: Date
   ): Promise<AccountAdministrationView[]> {
     if (scopePaths.length === 0) {
       return [];
@@ -601,13 +572,58 @@ class PgIdentityTransaction implements IdentityTransaction {
        JOIN organization org ON org.id = ra.scope_org_id AND org.tenant_id = ra.tenant_id
        WHERE ra.tenant_id = $1
          AND org.path LIKE ANY($2::text[])
+         AND ra.starts_at <= $3
+         AND (ra.ends_at IS NULL OR $3 < ra.ends_at)
+         AND ra.revoked_at IS NULL
        ORDER BY ra.account_id`,
-      [tenantId, scopePathPatterns(scopePaths)]
+      [tenantId, scopePathPatterns(scopePaths), now]
     );
     const views = await Promise.all(
-      rows.rows.map((row) => this.findAccountAdministrationViewForUpdate(row.account_id))
+      rows.rows.map((row) =>
+        this.findAccountAdministrationView(tenantId, row.account_id, scopePaths, now)
+      )
     );
     return views.filter((view): view is AccountAdministrationView => view !== null);
+  }
+
+  async findAccountAdministrationView(
+    tenantId: string,
+    accountId: string,
+    scopePaths: readonly string[],
+    now: Date
+  ): Promise<AccountAdministrationView | null> {
+    if (scopePaths.length === 0) {
+      return null;
+    }
+    const accountRows = await this.db.query<AccountRow>(
+      `SELECT a.*
+       FROM account a
+       WHERE a.id = $1
+         AND EXISTS (
+           SELECT 1 FROM account_person_link apl
+           WHERE apl.account_id = a.id AND apl.tenant_id = $2
+         )
+       LIMIT 1`,
+      [accountId, tenantId]
+    );
+    const account = accountRows.rows[0] === undefined ? null : mapAccount(accountRows.rows[0]);
+    if (account === null) {
+      return null;
+    }
+    const assignments = await this.findActiveAssignmentsForAccountInScopes(
+      tenantId,
+      account.id,
+      scopePaths,
+      now
+    );
+    if (assignments.length === 0) {
+      return null;
+    }
+    return {
+      account,
+      person: await this.findPersonForAccountInTenant(account.id, tenantId),
+      assignments
+    };
   }
 
   async findAccountAdministrationViewForUpdate(
@@ -641,10 +657,48 @@ class PgIdentityTransaction implements IdentityTransaction {
     return rows.rows[0] === undefined ? null : mapPerson(rows.rows[0]);
   }
 
+  private async findPersonForAccountInTenant(
+    accountId: string,
+    tenantId: string
+  ): Promise<Person | null> {
+    const rows = await this.db.query<PersonRow>(
+      `SELECT p.*
+       FROM person p
+       JOIN account_person_link apl
+         ON apl.person_id = p.id
+        AND apl.tenant_id = p.tenant_id
+       WHERE apl.account_id = $1
+         AND apl.tenant_id = $2
+       LIMIT 1`,
+      [accountId, tenantId]
+    );
+    return rows.rows[0] === undefined ? null : mapPerson(rows.rows[0]);
+  }
+
   private async findAssignmentsForAccount(accountId: string): Promise<RoleAssignment[]> {
     const rows = await this.db.query<AssignmentRow>(assignmentSql("ra.account_id = $1"), [
       accountId
     ]);
+    return rows.rows.map(mapAssignment);
+  }
+
+  private async findActiveAssignmentsForAccountInScopes(
+    tenantId: string,
+    accountId: string,
+    scopePaths: readonly string[],
+    now: Date
+  ): Promise<RoleAssignment[]> {
+    const rows = await this.db.query<AssignmentRow>(
+      assignmentSql(
+        `ra.account_id = $1
+         AND ra.tenant_id = $2
+         AND org.path LIKE ANY($3::text[])
+         AND ra.starts_at <= $4
+         AND (ra.ends_at IS NULL OR $4 < ra.ends_at)
+         AND ra.revoked_at IS NULL`
+      ),
+      [accountId, tenantId, scopePathPatterns(scopePaths), now]
+    );
     return rows.rows.map(mapAssignment);
   }
 
@@ -677,6 +731,43 @@ class PgIdentityTransaction implements IdentityTransaction {
       [tenantId, accountId]
     );
     return rows.rows.map((row) => row.scope_org_id);
+  }
+
+  private async lockRegion(tenantId: string, regionOrganizationId: string): Promise<void> {
+    const result = await this.db.query(
+      `SELECT id
+       FROM organization
+       WHERE tenant_id = $1 AND id = $2 AND type = 'REGION'
+       FOR UPDATE`,
+      [tenantId, regionOrganizationId]
+    );
+    if (result.rowCount !== 1) {
+      throw new NotFoundError("Region scope not found.");
+    }
+  }
+
+  private async isActiveRegionalAdminAssignmentForActiveAccount(
+    tenantId: string,
+    roleAssignmentId: string,
+    now: Date
+  ): Promise<boolean> {
+    const rows = await this.db.query<{ exists: boolean }>(
+      `SELECT EXISTS (
+        SELECT 1
+        FROM role_assignment ra
+        JOIN role_definition rd ON rd.id = ra.role_id
+        JOIN account a ON a.id = ra.account_id
+        WHERE ra.tenant_id = $1
+          AND ra.id = $2
+          AND rd.code = 'REGIONAL_ADMIN'
+          AND a.status = 'ACTIVE'
+          AND ra.starts_at <= $3
+          AND (ra.ends_at IS NULL OR $3 < ra.ends_at)
+          AND ra.revoked_at IS NULL
+      ) AS exists`,
+      [tenantId, roleAssignmentId, now]
+    );
+    return rows.rows[0]?.exists === true;
   }
 }
 
