@@ -213,7 +213,7 @@ export class OrganizationUseCases {
         throw new NotFoundError();
       }
 
-      const details = buildPartialUpdate(input, current);
+      const details = buildPartialUpdate(input);
       validateActivePeriod(
         details.activeFrom === undefined ? current.activeFrom : details.activeFrom,
         details.activeUntil === undefined ? current.activeUntil : details.activeUntil
@@ -367,8 +367,7 @@ function changedFields(before: Organization, after: Organization): string[] {
 }
 
 function buildPartialUpdate(
-  input: UpdateOrganizationInput,
-  current: Organization
+  input: UpdateOrganizationInput
 ): OrganizationDetailsUpdate {
   const details: Mutable<OrganizationDetailsUpdate> = {};
   if (input.name !== undefined) {
@@ -394,13 +393,10 @@ function buildPartialUpdate(
     details.activeFrom === undefined &&
     details.activeUntil === undefined
   ) {
-    return {
-      name: current.name,
-      code: current.code,
-      locationLabel: current.locationLabel,
-      activeFrom: current.activeFrom,
-      activeUntil: current.activeUntil
-    };
+    throw new ValidationError(
+      "At least one mutable organization field is required.",
+      "ORG_UPDATE_EMPTY"
+    );
   }
 
   return details;

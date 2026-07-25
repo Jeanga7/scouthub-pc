@@ -1,8 +1,10 @@
 import { ApplicationError } from "@scouthub/application";
+import type { OrganizationUseCases } from "@scouthub/application";
 import { isDevAdminEnabled } from "@scouthub/config";
 import {
   organizationResponseSchema,
   problemDetailsSchema,
+  type UpdateOrganizationRequest,
   type OrganizationResponse
 } from "@scouthub/contracts";
 import type { Organization } from "@scouthub/domain";
@@ -47,6 +49,36 @@ export function mapOrganization(organization: Organization): OrganizationRespons
     createdAt: organization.createdAt.toISOString(),
     updatedAt: organization.updatedAt.toISOString()
   });
+}
+
+type UpdateOrganizationUseCaseInput = Parameters<
+  OrganizationUseCases["updateOrganization"]
+>[0];
+
+export function mapUpdateOrganizationRequest(input: {
+  readonly payload: UpdateOrganizationRequest;
+  readonly organizationId: string;
+  readonly requestId: string;
+}): UpdateOrganizationUseCaseInput {
+  const { payload, organizationId, requestId: currentRequestId } = input;
+  return {
+    tenantId: payload.tenantId,
+    organizationId,
+    expectedVersion: payload.expectedVersion,
+    requestId: currentRequestId,
+    ...(payload.name !== undefined && { name: payload.name }),
+    ...(payload.code !== undefined && { code: payload.code }),
+    ...(payload.locationLabel !== undefined && {
+      locationLabel: payload.locationLabel
+    }),
+    ...(payload.activeFrom !== undefined && {
+      activeFrom: payload.activeFrom === null ? null : new Date(payload.activeFrom)
+    }),
+    ...(payload.activeUntil !== undefined && {
+      activeUntil:
+        payload.activeUntil === null ? null : new Date(payload.activeUntil)
+    })
+  };
 }
 
 export function jsonResponse(data: unknown, request_id: string, init?: ResponseInit): Response {

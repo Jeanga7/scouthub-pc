@@ -25,6 +25,13 @@ export const uuidSchema = z.uuid();
 
 const dateTimeOrNullSchema = z.iso.datetime().nullable().optional();
 const dateTimePatchSchema = z.iso.datetime().nullable().optional();
+const organizationPatchMutableFields = [
+  "name",
+  "code",
+  "locationLabel",
+  "activeFrom",
+  "activeUntil"
+] as const;
 
 export const organizationResponseSchema = z.object({
   id: uuidSchema,
@@ -82,7 +89,10 @@ export const updateOrganizationRequestSchema = z.object({
   locationLabel: z.string().min(1).nullable().optional(),
   activeFrom: dateTimePatchSchema,
   activeUntil: dateTimePatchSchema
-}).strict();
+}).strict().refine(
+  (payload) => organizationPatchMutableFields.some((field) => field in payload),
+  { message: "At least one mutable organization field is required." }
+);
 
 export const versionedOrganizationRequestSchema = z.object({
   tenantId: uuidSchema,

@@ -8,6 +8,7 @@ import {
   handleRouteError,
   jsonResponse,
   mapOrganization,
+  mapUpdateOrganizationRequest,
   requestId
 } from "@/organizations/http";
 import { createOrganizationUseCases } from "@/organizations/service";
@@ -50,19 +51,13 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     const organizationId = uuidSchema.parse(params.id);
     const payload = updateOrganizationRequestSchema.parse(await request.json());
     const organizationUseCases = createOrganizationUseCases();
-    const organization = await organizationUseCases.updateOrganization({
-      ...payload,
-      organizationId,
-      activeFrom:
-        payload.activeFrom === undefined
-          ? undefined
-          : payload.activeFrom === null ? null : new Date(payload.activeFrom),
-      activeUntil:
-        payload.activeUntil === undefined
-          ? undefined
-          : payload.activeUntil === null ? null : new Date(payload.activeUntil),
-      requestId: id
-    });
+    const organization = await organizationUseCases.updateOrganization(
+      mapUpdateOrganizationRequest({
+        payload,
+        organizationId,
+        requestId: id
+      })
+    );
     return jsonResponse(mapOrganization(organization), id);
   } catch (error) {
     return handleRouteError(error, id);

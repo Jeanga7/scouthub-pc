@@ -268,6 +268,32 @@ describe("PgOrganizationRepository", () => {
     const groupDirect = await useCases.getOrganization(ids.alpha, ids.groupDirect);
     const activeFrom = new Date("2026-01-01T00:00:00.000Z");
     const activeUntil = new Date("2026-12-31T00:00:00.000Z");
+    const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+
+    try {
+      const auditBeforeEmptyPatch = await pool.query<{ count: number }>(
+        "SELECT count(*)::int AS count FROM audit_event"
+      );
+      await expect(
+        useCases.updateOrganization({
+          tenantId: ids.alpha,
+          organizationId: group.id,
+          expectedVersion: group.version
+        })
+      ).rejects.toThrow("At least one mutable organization field");
+      const afterEmptyPatch = await useCases.getOrganization(ids.alpha, ids.groupX);
+      const auditAfterEmptyPatch = await pool.query<{ count: number }>(
+        "SELECT count(*)::int AS count FROM audit_event"
+      );
+
+      expect(afterEmptyPatch.version).toBe(group.version);
+      expect(afterEmptyPatch.updatedAt.toISOString()).toBe(group.updatedAt.toISOString());
+      expect(auditAfterEmptyPatch.rows[0]?.count).toBe(
+        auditBeforeEmptyPatch.rows[0]?.count
+      );
+    } finally {
+      await pool.end();
+    }
 
     const withDetails = await useCases.updateOrganization({
       tenantId: ids.alpha,
