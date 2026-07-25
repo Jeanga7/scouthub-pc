@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@scouthub/authz": "workspace:*",
     "@scouthub/domain": "workspace:*"
   }
 }

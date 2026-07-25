@@ -22,6 +22,43 @@ export const organizationTypeSchema = z.enum([
 export const organizationStatusSchema = z.enum(["DRAFT", "ACTIVE"]);
 
 export const uuidSchema = z.uuid();
+export const roleCodeSchema = z.enum([
+  "PROJECT_CONTRIBUTOR",
+  "UNIT_LEADER",
+  "GROUP_ADMIN",
+  "DISTRICT_REVIEWER",
+  "REGIONAL_PROGRAMME_REVIEWER",
+  "REGIONAL_ADMIN",
+  "REGIONAL_COMMS",
+  "DATA_OFFICER",
+  "NATIONAL_OBSERVER",
+  "PLATFORM_ADMIN"
+]);
+export const roleScopeTypeSchema = z.enum([
+  "OWN",
+  "UNIT",
+  "GROUP",
+  "DISTRICT",
+  "REGION",
+  "NATIONAL",
+  "GLOBAL_TECH"
+]);
+export const permissionCodeSchema = z.enum([
+  "organization.read",
+  "organization.create",
+  "organization.update",
+  "organization.activate",
+  "organization.move",
+  "invitation.create",
+  "invitation.read",
+  "invitation.revoke",
+  "role.read",
+  "role.assign",
+  "role.revoke",
+  "account.read",
+  "account.suspend",
+  "audit.read"
+]);
 
 const dateTimeOrNullSchema = z.iso.datetime().nullable().optional();
 const dateTimePatchSchema = z.iso.datetime().nullable().optional();
@@ -107,6 +144,108 @@ export const tenantQuerySchema = z.object({
   tenantId: uuidSchema
 });
 
+export const meResponseSchema = z.object({
+  account: z.object({
+    id: uuidSchema,
+    primaryEmail: z.string(),
+    status: z.enum(["INVITED", "ACTIVE", "SUSPENDED", "DISABLED", "ANONYMIZED"])
+  }),
+  person: z.object({
+    id: uuidSchema,
+    tenantId: uuidSchema,
+    displayName: z.string(),
+    classification: z.literal("P2")
+  }).nullable(),
+  roleAssignments: z.array(z.object({
+    id: uuidSchema,
+    tenantId: uuidSchema,
+    roleCode: roleCodeSchema,
+    permissions: z.array(permissionCodeSchema),
+    scopeType: roleScopeTypeSchema,
+    scopeOrgId: uuidSchema.nullable(),
+    startsAt: z.iso.datetime(),
+    endsAt: z.iso.datetime().nullable()
+  })),
+  scopes: z.array(z.object({
+    tenantId: uuidSchema,
+    scopeOrgId: uuidSchema.nullable(),
+    scopeType: roleScopeTypeSchema
+  }))
+});
+
+export const inviteAdultUserRequestSchema = z.object({
+  tenantId: uuidSchema,
+  email: z.email(),
+  firstName: z.string().min(1),
+  lastName: z.string().min(1),
+  roleCode: roleCodeSchema,
+  scopeOrganizationId: uuidSchema,
+  adultEligibilityConfirmed: z.literal(true)
+}).strict();
+
+export const invitationResponseSchema = z.object({
+  id: uuidSchema,
+  tenantId: uuidSchema,
+  email: z.string(),
+  intendedRoleCode: roleCodeSchema,
+  intendedScopeOrgId: uuidSchema,
+  status: z.enum(["CREATING", "PENDING", "ACCEPTED", "REVOKED", "EXPIRED", "FAILED"]),
+  expiresAt: z.iso.datetime(),
+  acceptedAt: z.iso.datetime().nullable(),
+  revokedAt: z.iso.datetime().nullable(),
+  createdAt: z.iso.datetime()
+});
+
+export const createRoleAssignmentRequestSchema = z.object({
+  tenantId: uuidSchema,
+  accountId: uuidSchema,
+  roleCode: roleCodeSchema,
+  scopeOrgId: uuidSchema,
+  startsAt: z.iso.datetime(),
+  endsAt: z.iso.datetime().nullable().optional()
+}).strict();
+
+export const roleAssignmentResponseSchema = z.object({
+  id: uuidSchema,
+  tenantId: uuidSchema,
+  accountId: uuidSchema,
+  roleCode: roleCodeSchema,
+  permissions: z.array(permissionCodeSchema),
+  scopeType: roleScopeTypeSchema,
+  scopeOrgId: uuidSchema.nullable(),
+  startsAt: z.iso.datetime(),
+  endsAt: z.iso.datetime().nullable(),
+  revokedAt: z.iso.datetime().nullable()
+});
+
+export const accountAdministrationResponseSchema = z.object({
+  account: z.object({
+    id: uuidSchema,
+    primaryEmail: z.string(),
+    status: z.enum(["INVITED", "ACTIVE", "SUSPENDED", "DISABLED", "ANONYMIZED"])
+  }),
+  person: z.object({
+    id: uuidSchema,
+    tenantId: uuidSchema,
+    displayName: z.string(),
+    classification: z.literal("P2")
+  }).nullable(),
+  activeRoleAssignments: z.array(roleAssignmentResponseSchema)
+});
+
+export const revokeRoleAssignmentRequestSchema = z.object({
+  tenantId: uuidSchema,
+  reason: z.string().min(1).nullable().optional()
+}).strict();
+
+export const revokeInvitationRequestSchema = z.object({
+  tenantId: uuidSchema
+}).strict();
+
+export const suspendAccountRequestSchema = z.object({
+  tenantId: uuidSchema
+}).strict();
+
 export const problemDetailsSchema = z.object({
   type: z.string(),
   title: z.string(),
@@ -120,3 +259,11 @@ export type CreateTenantRootRequest = z.infer<typeof createTenantRootRequestSche
 export type CreateOrganizationRequest = z.infer<typeof createOrganizationRequestSchema>;
 export type UpdateOrganizationRequest = z.infer<typeof updateOrganizationRequestSchema>;
 export type MoveOrganizationRequest = z.infer<typeof moveOrganizationRequestSchema>;
+export type InviteAdultUserRequest = z.infer<typeof inviteAdultUserRequestSchema>;
+export type InvitationResponse = z.infer<typeof invitationResponseSchema>;
+export type CreateRoleAssignmentRequest = z.infer<typeof createRoleAssignmentRequestSchema>;
+export type RoleAssignmentResponse = z.infer<typeof roleAssignmentResponseSchema>;
+export type AccountAdministrationResponse = z.infer<typeof accountAdministrationResponseSchema>;
+export type RevokeRoleAssignmentRequest = z.infer<typeof revokeRoleAssignmentRequestSchema>;
+export type RevokeInvitationRequest = z.infer<typeof revokeInvitationRequestSchema>;
+export type SuspendAccountRequest = z.infer<typeof suspendAccountRequestSchema>;

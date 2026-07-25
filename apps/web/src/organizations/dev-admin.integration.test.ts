@@ -1,43 +1,15 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   tenantQuerySchema,
   updateOrganizationRequestSchema,
   uuidSchema
 } from "@scouthub/contracts";
 import {
-  assertDevAdmin,
   handleRouteError,
   mapUpdateOrganizationRequest
 } from "./http";
-import { resetServerEnvForTests } from "@/env/server";
 
-describe("dev-admin HTTP guard", () => {
-  beforeEach(() => {
-    process.env.DATABASE_URL = "postgres://scouthub:scouthub@localhost:5433/scouthub";
-    process.env.NEXT_PUBLIC_APP_NAME = "ScoutHub-PC";
-    resetServerEnvForTests();
-  });
-
-  it.each([
-    ["production", "true", 404],
-    ["preview", "true", 404],
-    ["local", "false", 404],
-    ["local", "true", null],
-    ["test", "true", null]
-  ])("APP_ENV=%s ENABLE_DEV_ADMIN=%s", (appEnv, enabled, expectedStatus) => {
-    process.env.APP_ENV = appEnv;
-    process.env.ENABLE_DEV_ADMIN = enabled;
-    resetServerEnvForTests();
-
-    const response = assertDevAdmin(
-      new Request("http://localhost/api/v1/organizations", {
-        headers: { "x-request-id": "req_test" }
-      })
-    );
-
-    expect(response?.status ?? null).toBe(expectedStatus);
-  });
-
+describe("organization HTTP boundary", () => {
   it("requires tenant and valid UUID parameters at the HTTP boundary", () => {
     expect(() => tenantQuerySchema.parse({})).toThrow();
     expect(() => uuidSchema.parse("not-a-uuid")).toThrow();

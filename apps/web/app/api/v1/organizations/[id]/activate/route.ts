@@ -1,6 +1,6 @@
 import { uuidSchema, versionedOrganizationRequestSchema } from "@scouthub/contracts";
 import {
-  assertDevAdmin,
+  authorizeOrganization,
   handleRouteError,
   jsonResponse,
   mapOrganization,
@@ -11,21 +11,27 @@ import { createOrganizationUseCases } from "@/organizations/service";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
-  const blocked = assertDevAdmin(request);
-  if (blocked !== null) {
-    return blocked;
-  }
-
   const id = requestId(request);
   try {
     const params = await context.params;
     const organizationId = uuidSchema.parse(params.id);
     const payload = versionedOrganizationRequestSchema.parse(await request.json());
     const organizationUseCases = createOrganizationUseCases();
+    const current = await organizationUseCases.getOrganization(
+      payload.tenantId,
+      organizationId
+    );
+    const actor = await authorizeOrganization({
+      request,
+      requestId: id,
+      action: "organization.activate",
+      organization: current
+    });
     const organization = await organizationUseCases.activateOrganization({
       ...payload,
       organizationId,
-      requestId: id
+      requestId: id,
+      auditActor: { kind: "USER", id: actor.account.id }
     });
     return jsonResponse(mapOrganization(organization), id);
   } catch (error) {

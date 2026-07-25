@@ -1,33 +1,19 @@
 import { ApplicationError } from "@scouthub/application";
-import type { OrganizationUseCases } from "@scouthub/application";
-import { isDevAdminEnabled } from "@scouthub/config";
+import type { ActorContext, OrganizationUseCases } from "@scouthub/application";
+import { canAccessOrganization } from "@scouthub/authz";
 import {
   organizationResponseSchema,
   problemDetailsSchema,
   type UpdateOrganizationRequest,
   type OrganizationResponse
 } from "@scouthub/contracts";
+import type { PermissionCode } from "@scouthub/domain";
 import type { Organization } from "@scouthub/domain";
 import { ZodError } from "zod";
-import { getServerEnv } from "@/env/server";
+import { requireActor } from "@/identity/http";
 
 export function requestId(request: Request): string {
   return request.headers.get("x-request-id") ?? crypto.randomUUID();
-}
-
-export function assertDevAdmin(request: Request): Response | null {
-  const env = getServerEnv();
-  if (isDevAdminEnabled(env)) {
-    return null;
-  }
-
-  // Until Slice 2 authz exists, the local admin surface is hidden outside local/test.
-  return problemResponse({
-    requestId: requestId(request),
-    status: 404,
-    title: "Not found",
-    detail: "Resource not found."
-  });
 }
 
 export function mapOrganization(organization: Organization): OrganizationResponse {
@@ -51,6 +37,32 @@ export function mapOrganization(organization: Organization): OrganizationRespons
   });
 }
 
+export async function authorizeOrganization(
+  input: {
+    readonly request: Request;
+    readonly requestId: string;
+    readonly action: PermissionCode;
+    readonly organization: Organization;
+  }
+): Promise<ActorContext> {
+  const actor = await requireActor(input.request, input.requestId);
+  const decision = canAccessOrganization(
+    actor,
+    input.action,
+    {
+      tenantId: input.organization.tenantId,
+      organizationId: input.organization.id,
+      path: input.organization.path,
+      type: input.organization.type
+    },
+    { now: new Date() }
+  );
+  if (decision.effect === "deny") {
+    throw new ApplicationError("Permission denied.", "AUTHZ_DENIED", 403);
+  }
+  return actor;
+}
+
 type UpdateOrganizationUseCaseInput = Parameters<
   OrganizationUseCases["updateOrganization"]
 >[0];
@@ -59,13 +71,17 @@ export function mapUpdateOrganizationRequest(input: {
   readonly payload: UpdateOrganizationRequest;
   readonly organizationId: string;
   readonly requestId: string;
+  readonly actor?: ActorContext;
 }): UpdateOrganizationUseCaseInput {
-  const { payload, organizationId, requestId: currentRequestId } = input;
+  const { payload, organizationId, requestId: currentRequestId, actor } = input;
   return {
     tenantId: payload.tenantId,
     organizationId,
     expectedVersion: payload.expectedVersion,
     requestId: currentRequestId,
+    ...(actor !== undefined && {
+      auditActor: { kind: "USER" as const, id: actor.account.id }
+    }),
     ...(payload.name !== undefined && { name: payload.name }),
     ...(payload.code !== undefined && { code: payload.code }),
     ...(payload.locationLabel !== undefined && {

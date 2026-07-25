@@ -109,7 +109,8 @@ export class OrganizationUseCases {
           resourceId: organization.id,
           action: "organization.created",
           metadata: { type: organization.type, version: organization.version },
-          requestId: input.requestId
+          requestId: input.requestId,
+          auditActor: input.auditActor
         })
       );
       return organization;
@@ -168,7 +169,8 @@ export class OrganizationUseCases {
             type: organization.type,
             version: organization.version
           },
-          requestId: input.requestId
+          requestId: input.requestId,
+          auditActor: input.auditActor
         })
       );
       return organization;
@@ -240,7 +242,8 @@ export class OrganizationUseCases {
             old_version: current.version,
             new_version: updated.version
           },
-          requestId: input.requestId
+          requestId: input.requestId,
+          auditActor: input.auditActor
         })
       );
       return updated;
@@ -278,7 +281,8 @@ export class OrganizationUseCases {
             old_version: current.version,
             new_version: activated.version
           },
-          requestId: input.requestId
+          requestId: input.requestId,
+          auditActor: input.auditActor
         })
       );
       return activated;
@@ -337,7 +341,8 @@ export class OrganizationUseCases {
             old_version: current.version,
             new_version: moved.version
           },
-          requestId: input.requestId
+          requestId: input.requestId,
+          auditActor: input.auditActor
         })
       );
       return moved;

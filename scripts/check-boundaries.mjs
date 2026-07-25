@@ -9,11 +9,31 @@ const forbidden = [
   "R2Bucket"
 ];
 
+const repositoryForbidden = [
+  "ENABLE_DEV_ADMIN",
+  "isDevAdminEnabled",
+  "assertDevAdmin",
+  "organizationMembership",
+  "OrganizationList",
+  "ClerkOrganizations",
+  "publicMetadata: { role",
+  "privateMetadata: { role"
+];
+
 function collectSourceFiles(directory) {
   const entries = readdirSync(directory);
   const files = [];
 
   for (const entry of entries) {
+    if (
+      entry === "node_modules" ||
+      entry === ".git" ||
+      entry === ".next" ||
+      entry === ".open-next" ||
+      entry === "dist"
+    ) {
+      continue;
+    }
     const path = join(directory, entry);
     const stat = statSync(path);
 
@@ -41,6 +61,18 @@ for (const file of files) {
   for (const token of forbidden) {
     if (content.includes(token)) {
       failures.push(`${file}: forbidden provider token "${token}"`);
+    }
+  }
+}
+
+for (const file of collectSourceFiles(".")) {
+  if (file.includes("node_modules/") || file.includes(".next/") || file.includes(".open-next/")) {
+    continue;
+  }
+  const content = readFileSync(file, "utf8");
+  for (const token of repositoryForbidden) {
+    if (content.includes(token)) {
+      failures.push(`${file}: forbidden security token "${token}"`);
     }
   }
 }
