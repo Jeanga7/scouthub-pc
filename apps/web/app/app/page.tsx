@@ -1,0 +1,18 @@
+import { AppShell } from "@scouthub/ui";
+
+export default function PrivateAppPlaceholderPage() {
+  return (
+    <AppShell>
+      <main className="page">
+        <section className="panel">
+          <p className="eyebrow">Espace prive</p>
+          <h1>Console ScoutHub</h1>
+          <p>
+            Placeholder authentifie pour la Phase 0. Les modules metier seront
+            ajoutes dans les slices suivantes.
+          </p>
+        </section>
+      </main>
+    </AppShell>
+  );
+}

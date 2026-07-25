@@ -1,0 +1,42 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "scouthub-region-web",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-07-25",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "APP_ENV": "local",
+    "NEXT_PUBLIC_APP_NAME": "ScoutHub Region"
+  },
+  "r2_buckets": [
+    {
+      "binding": "SCOUTHUB_OBJECTS",
+      "bucket_name": "scouthub-region-objects-preview"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "SCOUTHUB_QUEUE",
+        "queue": "scouthub-region-async-preview"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "scouthub-region-async-preview",
+        "max_batch_size": 10,
+        "max_batch_timeout": 30
+      }
+    ]
+  },
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  }
+}
