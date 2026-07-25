@@ -1,0 +1,70 @@
+{
+  "AGENTS.md": {
+    "bytes": 5553,
+    "sha256": "c2a3c44a6caeb48ae245c971f2f69a55266149dbcaaa70c6d07c68d63c7eeaa6"
+  },
+  "FIRST_SLICES.md": {
+    "bytes": 4105,
+    "sha256": "1326b1f2e3845ad1dfd55e877e7491d38b651001c10ef7d1db041ef158251d93"
+  },
+  "MIGRATION_v1_0_to_v1_1.md": {
+    "bytes": 2116,
+    "sha256": "828393818f5141c98b0cf7260dd05b0758ee26737da83953158f722bfcb467cd"
+  },
+  "PRODUCT_DECISIONS_TO_CONFIRM.md": {
+    "bytes": 3093,
+    "sha256": "47973427d08ff7ad7821e2a85d45462e8fc119a5c8cdb4e9115c81f5e1374a88"
+  },
+  "PROMPT_BOOTSTRAP_CODEX.md": {
+    "bytes": 2942,
+    "sha256": "a2a742dac52d0373eb1a1da938896640018cff679c886c0b4f056eee7ad17aa5"
+  },
+  "README_START_HERE.md": {
+    "bytes": 3699,
+    "sha256": "e2313b03d39655735f28fc53a73491b95c03186455ce3da2c0d44a06028bad11"
+  },
+  "docs/MASTER_SPEC.md": {
+    "bytes": 102711,
+    "sha256": "71768b008417b5edd92e3504cf8dd6a0314bdcc37615bec652042396b4b5d09f"
+  },
+  "docs/adr/ADR-002-zero-cost-serverless-infrastructure.md": {
+    "bytes": 4471,
+    "sha256": "97fbaada21dd8a8c652ad8714cbe39bfd74ec7e5638536e435c5c337ab716c9e"
+  },
+  "docs/adr/README.md": {
+    "bytes": 608,
+    "sha256": "a84c723b78bd431d7e5115b22a637dd038ab3b5755811d2433a6b25abe3652ea"
+  },
+  "docs/runbooks/BACKUP_RESTORE.md": {
+    "bytes": 1939,
+    "sha256": "3548188a725659cfe83c332fe483768d0f4d38388bc63927e97285b59b05a945"
+  },
+  "docs/runbooks/COST_GUARDRAILS.md": {
+    "bytes": 1765,
+    "sha256": "f9af74760b40272863816657fa751791184dfbaddabc0342448481be578375ee"
+  },
+  "docs/runbooks/DEPLOYMENT_ZERO_COST.md": {
+    "bytes": 2583,
+    "sha256": "d8e3f63d37f273293342cd828ce018b7c608afa4d3783c5c7369fe75fb4fe0c0"
+  },
+  "docs/runbooks/INCIDENT_BASIC.md": {
+    "bytes": 1240,
+    "sha256": "313936be91ebb6ee305c277e40a50f49e7ed35acfd7116e4422bb35f4beda1b1"
+  },
+  "docs/runbooks/README.md": {
+    "bytes": 279,
+    "sha256": "6bf252661c27cf2898d513a1d5bbd41b71b02198ea59bd7d0f40297c9b40b9dc"
+  },
+  "docs/runbooks/SECRETS_ROTATION.md": {
+    "bytes": 827,
+    "sha256": "8069dedc0a4301f1d5a6693938b575df22537c33c0cf7600ab43c85457c9c010"
+  },
+  "docs/security/HOSTING_DATA_BOUNDARIES.md": {
+    "bytes": 1589,
+    "sha256": "f521dec92970228343f75a0a1e33e2b0cffe0d86e19644040a204a3b5e8c1de9"
+  },
+  "docs/security/README.md": {
+    "bytes": 250,
+    "sha256": "f30c440b6522b281b1b3e010c7e9791adff6eac532e38ad7b419063d4bc13e3f"
+  }
+}
