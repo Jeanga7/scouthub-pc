@@ -1,4 +1,4 @@
-# ScoutHub Region
+# ScoutHub-PC
 
 Plateforme numerique regionale du scoutisme. Ce depot est bootstrappe pour la
 Slice 1 ajoute le modele Organization Tree : tenant NSO, region, district
@@ -93,7 +93,8 @@ Aucune ressource cloud ni service payant n'est cree automatiquement.
 
 `make db-seed-dev` applique uniquement des donnees synthetiques locales :
 deux tenants fictifs, un chemin avec district et un chemin sans district. La
-commande refuse `preview` et `production`.
+commande exige `APP_ENV=local` ou `APP_ENV=test`. En `local`, elle refuse une
+`DATABASE_URL` distante afin d'eviter tout seed accidentel hors PostgreSQL local.
 
 ## Decisions Slice 1
 

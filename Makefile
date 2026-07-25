@@ -5,7 +5,7 @@ SHELL := /bin/sh
 .PHONY: help install dev db-up db-down db-ps db-logs migrate db-seed-dev db-generate db-studio lint typecheck test test-integration build build-workers preview deploy cf-typegen check ci
 
 help:
-	@printf '%s\n' 'ScoutHub Region commands'
+	@printf '%s\n' 'ScoutHub-PC commands'
 	@printf '%s\n' ''
 	@printf '%s\n' 'Setup:'
 	@printf '%s\n' '  make install        Install pnpm dependencies'
@@ -56,7 +56,7 @@ migrate:
 	pnpm db:migrate
 
 db-seed-dev:
-	pnpm db:seed:dev
+	APP_ENV=local pnpm db:seed:dev
 
 db-generate:
 	pnpm db:generate

@@ -88,9 +88,18 @@ export function OrganizationsConsole({
           }}
         >
           <h2>Create NSO root</h2>
-          <input name="name" placeholder="Name" required />
-          <input name="code" placeholder="Code" required />
-          <input name="locationLabel" placeholder="Location" />
+          <label>
+            Name
+            <input name="name" placeholder="Name" required />
+          </label>
+          <label>
+            Code
+            <input name="code" placeholder="Code" required />
+          </label>
+          <label>
+            Location
+            <input name="locationLabel" placeholder="Location" />
+          </label>
           <button type="submit">Create root</button>
         </form>
 
@@ -110,16 +119,31 @@ export function OrganizationsConsole({
           }}
         >
           <h2>Create child</h2>
-          <select name="type" required>
-            <option value="REGION">Region</option>
-            <option value="DISTRICT">District</option>
-            <option value="GROUP">Group</option>
-            <option value="UNIT">Unit</option>
-          </select>
-          <input name="parentId" placeholder="Parent UUID" required />
-          <input name="name" placeholder="Name" required />
-          <input name="code" placeholder="Code" required />
-          <input name="locationLabel" placeholder="Location" />
+          <label>
+            Type
+            <select name="type" required>
+              <option value="REGION">Region</option>
+              <option value="DISTRICT">District</option>
+              <option value="GROUP">Group</option>
+              <option value="UNIT">Unit</option>
+            </select>
+          </label>
+          <label>
+            Parent UUID
+            <input name="parentId" placeholder="Parent UUID" required />
+          </label>
+          <label>
+            Name
+            <input name="name" placeholder="Name" required />
+          </label>
+          <label>
+            Code
+            <input name="code" placeholder="Code" required />
+          </label>
+          <label>
+            Location
+            <input name="locationLabel" placeholder="Location" />
+          </label>
           <button type="submit">Create</button>
         </form>
       </section>
@@ -165,12 +189,21 @@ export function OrganizationsConsole({
                 });
               }}
             >
-              <input name="name" defaultValue={organization.name} required />
-              <input name="code" defaultValue={organization.code} required />
-              <input
-                name="locationLabel"
-                defaultValue={organization.locationLabel ?? ""}
-              />
+              <label>
+                Name
+                <input name="name" defaultValue={organization.name} required />
+              </label>
+              <label>
+                Code
+                <input name="code" defaultValue={organization.code} required />
+              </label>
+              <label>
+                Location
+                <input
+                  name="locationLabel"
+                  defaultValue={organization.locationLabel ?? ""}
+                />
+              </label>
               <button type="submit">Update</button>
             </form>
             <form
@@ -185,7 +218,10 @@ export function OrganizationsConsole({
                 });
               }}
             >
-              <input name="newParentId" placeholder="New parent UUID" />
+              <label>
+                New parent UUID
+                <input name="newParentId" placeholder="New parent UUID" />
+              </label>
               <button type="submit">Move</button>
             </form>
             <button

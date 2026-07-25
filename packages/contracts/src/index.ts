@@ -24,6 +24,7 @@ export const organizationStatusSchema = z.enum(["DRAFT", "ACTIVE"]);
 export const uuidSchema = z.uuid();
 
 const dateTimeOrNullSchema = z.iso.datetime().nullable().optional();
+const dateTimePatchSchema = z.iso.datetime().nullable().optional();
 
 export const organizationResponseSchema = z.object({
   id: uuidSchema,
@@ -76,12 +77,12 @@ export const createOrganizationRequestSchema = z.object({
 export const updateOrganizationRequestSchema = z.object({
   tenantId: uuidSchema,
   expectedVersion: z.number().int().positive(),
-  name: z.string().min(1),
-  code: z.string().min(1),
+  name: z.string().min(1).optional(),
+  code: z.string().min(1).optional(),
   locationLabel: z.string().min(1).nullable().optional(),
-  activeFrom: dateTimeOrNullSchema,
-  activeUntil: dateTimeOrNullSchema
-});
+  activeFrom: dateTimePatchSchema,
+  activeUntil: dateTimePatchSchema
+}).strict();
 
 export const versionedOrganizationRequestSchema = z.object({
   tenantId: uuidSchema,

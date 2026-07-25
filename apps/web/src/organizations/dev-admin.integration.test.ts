@@ -1,12 +1,16 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import { tenantQuerySchema, uuidSchema } from "@scouthub/contracts";
+import {
+  tenantQuerySchema,
+  updateOrganizationRequestSchema,
+  uuidSchema
+} from "@scouthub/contracts";
 import { assertDevAdmin, handleRouteError } from "./http";
 import { resetServerEnvForTests } from "@/env/server";
 
 describe("dev-admin HTTP guard", () => {
   beforeEach(() => {
     process.env.DATABASE_URL = "postgres://scouthub:scouthub@localhost:5433/scouthub";
-    process.env.NEXT_PUBLIC_APP_NAME = "ScoutHub Region";
+    process.env.NEXT_PUBLIC_APP_NAME = "ScoutHub-PC";
     resetServerEnvForTests();
   });
 
@@ -33,6 +37,23 @@ describe("dev-admin HTTP guard", () => {
   it("requires tenant and valid UUID parameters at the HTTP boundary", () => {
     expect(() => tenantQuerySchema.parse({})).toThrow();
     expect(() => uuidSchema.parse("not-a-uuid")).toThrow();
+  });
+
+  it("accepts partial PATCH payloads and rejects immutable fields", () => {
+    const parsed = updateOrganizationRequestSchema.parse({
+      tenantId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
+      expectedVersion: 3,
+      name: "Nouveau nom"
+    });
+
+    expect(parsed).not.toHaveProperty("locationLabel");
+    expect(() =>
+      updateOrganizationRequestSchema.parse({
+        tenantId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
+        expectedVersion: 3,
+        parentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2"
+      })
+    ).toThrow();
   });
 
   it("returns problem details with request_id and without internal details", async () => {

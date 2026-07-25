@@ -18,11 +18,11 @@ export interface OrganizationInsert {
 }
 
 export interface OrganizationDetailsUpdate {
-  readonly name: string;
-  readonly code: string;
-  readonly locationLabel: string | null;
-  readonly activeFrom: Date | null;
-  readonly activeUntil: Date | null;
+  readonly name?: string;
+  readonly code?: string;
+  readonly locationLabel?: string | null;
+  readonly activeFrom?: Date | null;
+  readonly activeUntil?: Date | null;
 }
 
 export interface MoveSubtreeInput {

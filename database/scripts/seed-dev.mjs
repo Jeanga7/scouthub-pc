@@ -1,16 +1,5 @@
 import pg from "pg";
 
-const appEnv = process.env.APP_ENV ?? "local";
-if (appEnv !== "local" && appEnv !== "test") {
-  throw new Error("db:seed:dev is allowed only for APP_ENV=local or APP_ENV=test.");
-}
-
-const databaseUrl =
-  process.env.DATABASE_URL ??
-  "postgres://scouthub:scouthub@localhost:5433/scouthub";
-
-const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
-
 const alpha = {
   nso: "11111111-1111-4111-8111-111111111111",
   region: "11111111-1111-4111-8111-111111111112",
@@ -42,24 +31,53 @@ const rows = [
   [beta.groupNebuleuse, beta.nso, beta.region, "GROUP", "Groupe Nebuleuse", "NEBULEUSE", `/${beta.nso}/${beta.region}/${beta.groupNebuleuse}/`, 2]
 ];
 
-try {
+export function resolveSeedConfig(env = process.env) {
+  const appEnv = env.APP_ENV;
+  if (appEnv !== "local" && appEnv !== "test") {
+    throw new Error("db:seed:dev requires explicit APP_ENV=local or APP_ENV=test.");
+  }
+
+  const databaseUrl =
+    env.DATABASE_URL ??
+    "postgres://scouthub:scouthub@localhost:5433/scouthub";
+  if (appEnv === "local" && !isLocalDatabaseUrl(databaseUrl)) {
+    throw new Error("db:seed:dev refuses non-local DATABASE_URL when APP_ENV=local.");
+  }
+
+  return { appEnv, databaseUrl };
+}
+
+export function isLocalDatabaseUrl(databaseUrl) {
+  const hostname = new URL(databaseUrl).hostname;
+  return hostname === "localhost" || hostname === "127.0.0.1";
+}
+
+export async function seedDevelopmentOrganizations(databaseUrl) {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
   await pool.query("BEGIN");
-  for (const row of rows) {
-    await pool.query(
-      `
+  try {
+    for (const row of rows) {
+      await pool.query(
+        `
       INSERT INTO organization
         (id, tenant_id, parent_id, type, name, code, status, path, depth)
       VALUES ($1, $2, $3, $4, $5, $6, 'ACTIVE', $7, $8)
       ON CONFLICT (id) DO NOTHING
       `,
-      row
-    );
+        row
+      );
+    }
+    await pool.query("COMMIT");
+  } catch (error) {
+    await pool.query("ROLLBACK");
+    throw error;
+  } finally {
+    await pool.end();
   }
-  await pool.query("COMMIT");
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const { databaseUrl } = resolveSeedConfig();
+  await seedDevelopmentOrganizations(databaseUrl);
   console.log("Development organization seed applied.");
-} catch (error) {
-  await pool.query("ROLLBACK");
-  throw error;
-} finally {
-  await pool.end();
 }

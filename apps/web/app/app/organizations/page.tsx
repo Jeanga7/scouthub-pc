@@ -1,4 +1,5 @@
 import { isDevAdminEnabled } from "@scouthub/config";
+import type { OrganizationResponse } from "@scouthub/contracts";
 import { AppShell } from "@scouthub/ui";
 import { getServerEnv } from "@/env/server";
 import { mapOrganization } from "@/organizations/http";
@@ -32,13 +33,16 @@ export default async function OrganizationsPage({
 
   const params = await searchParams;
   const tenantId = params.tenantId ?? "";
-  const organizations =
-    tenantId.length === 0
-      ? []
-      : await createOrganizationUseCases()
-          .then((useCases) => useCases.listDescendants(tenantId, tenantId))
-          .then((items) => items.map(mapOrganization))
-          .catch(() => []);
+  let organizations: OrganizationResponse[] = [];
+  if (tenantId.length > 0) {
+    try {
+      const useCases = createOrganizationUseCases();
+      const items = await useCases.listDescendants(tenantId, tenantId);
+      organizations = items.map(mapOrganization);
+    } catch {
+      organizations = [];
+    }
+  }
 
   return (
     <AppShell>

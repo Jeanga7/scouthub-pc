@@ -18,7 +18,7 @@ CREATE TABLE "organization" (
 	"version" integer DEFAULT 1 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "organization_pkey" PRIMARY KEY("id"),
+	CONSTRAINT "organization_id_pk" PRIMARY KEY("id"),
 	CONSTRAINT "organization_id_tenant_id_unique" UNIQUE("id","tenant_id"),
 	CONSTRAINT "organization_tenant_code_unique" UNIQUE("tenant_id","code"),
 	CONSTRAINT "organization_depth_non_negative" CHECK ("depth" >= 0),
@@ -33,7 +33,7 @@ CREATE TABLE "organization" (
 ALTER TABLE "organization" ADD CONSTRAINT "organization_parent_same_tenant_fk" FOREIGN KEY ("parent_id","tenant_id") REFERENCES "organization"("id","tenant_id") ON DELETE RESTRICT ON UPDATE RESTRICT;--> statement-breakpoint
 CREATE INDEX "organization_tenant_idx" ON "organization" USING btree ("tenant_id");--> statement-breakpoint
 CREATE INDEX "organization_parent_idx" ON "organization" USING btree ("tenant_id","parent_id");--> statement-breakpoint
-CREATE INDEX "organization_path_idx" ON "organization" USING btree ("tenant_id","path");--> statement-breakpoint
+CREATE INDEX "organization_path_idx" ON "organization" USING btree ("tenant_id","path" text_pattern_ops);--> statement-breakpoint
 CREATE INDEX "organization_type_idx" ON "organization" USING btree ("tenant_id","type");--> statement-breakpoint
 CREATE INDEX "organization_status_idx" ON "organization" USING btree ("tenant_id","status");--> statement-breakpoint
 CREATE TABLE "audit_event" (
@@ -51,6 +51,7 @@ CREATE TABLE "audit_event" (
 --> statement-breakpoint
 CREATE INDEX "audit_event_tenant_resource_idx" ON "audit_event" USING btree ("tenant_id","resource_type","resource_id","occurred_at");--> statement-breakpoint
 CREATE INDEX "audit_event_tenant_action_idx" ON "audit_event" USING btree ("tenant_id","action");--> statement-breakpoint
+-- Slice 1 audit is append-only: corrections happen through new events, not mutation.
 CREATE OR REPLACE FUNCTION prevent_audit_event_changes()
 RETURNS trigger
 LANGUAGE plpgsql

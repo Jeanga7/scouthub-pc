@@ -65,7 +65,7 @@ export const organization = pgTable(
     code: text("code").notNull(),
     status: organizationStatus("status").notNull().default("DRAFT"),
     path: text("path").notNull(),
-    depth: integer("depth").notNull(),
+    depth: integer("depth").notNull().default(0),
     locationLabel: text("location_label"),
     activeFrom: timestamp("active_from", { withTimezone: true }),
     activeUntil: timestamp("active_until", { withTimezone: true }),
@@ -89,10 +89,14 @@ export const organization = pgTable(
     }).onDelete("restrict").onUpdate("restrict"),
     index("organization_tenant_idx").on(table.tenantId),
     index("organization_parent_idx").on(table.tenantId, table.parentId),
-    index("organization_path_idx").on(table.tenantId, table.path),
+    index("organization_path_idx").on(
+      table.tenantId,
+      table.path.op("text_pattern_ops")
+    ),
     index("organization_type_idx").on(table.tenantId, table.type),
     index("organization_status_idx").on(table.tenantId, table.status),
     check("organization_depth_non_negative", sql`${table.depth} >= 0`),
+    check("organization_version_positive", sql`${table.version} >= 1`),
     check("organization_name_not_empty", sql`length(btrim(${table.name})) > 0`),
     check("organization_code_not_empty", sql`length(btrim(${table.code})) > 0`),
     check(

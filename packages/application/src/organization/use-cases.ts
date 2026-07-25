@@ -48,8 +48,8 @@ export interface UpdateOrganizationInput extends RequestContext {
   readonly tenantId: string;
   readonly organizationId: string;
   readonly expectedVersion: number;
-  readonly name: string;
-  readonly code: string;
+  readonly name?: string;
+  readonly code?: string;
   readonly locationLabel?: string | null;
   readonly activeFrom?: Date | null;
   readonly activeUntil?: Date | null;
@@ -204,15 +204,6 @@ export class OrganizationUseCases {
   }
 
   async updateOrganization(input: UpdateOrganizationInput): Promise<Organization> {
-    const details: OrganizationDetailsUpdate = {
-      name: normalizeOrganizationName(input.name),
-      code: normalizeOrganizationCode(input.code),
-      locationLabel: input.locationLabel?.trim() || null,
-      activeFrom: input.activeFrom ?? null,
-      activeUntil: input.activeUntil ?? null
-    };
-    validateActivePeriod(details.activeFrom, details.activeUntil);
-
     return this.repository.transaction(async (transaction) => {
       const current = await transaction.findByIdForUpdate(
         input.tenantId,
@@ -221,6 +212,12 @@ export class OrganizationUseCases {
       if (current === null) {
         throw new NotFoundError();
       }
+
+      const details = buildPartialUpdate(input, current);
+      validateActivePeriod(
+        details.activeFrom === undefined ? current.activeFrom : details.activeFrom,
+        details.activeUntil === undefined ? current.activeUntil : details.activeUntil
+      );
 
       const updated = await transaction.updateOrganization(
         input.tenantId,
@@ -368,6 +365,50 @@ function changedFields(before: Organization, after: Organization): string[] {
 
   return changed;
 }
+
+function buildPartialUpdate(
+  input: UpdateOrganizationInput,
+  current: Organization
+): OrganizationDetailsUpdate {
+  const details: Mutable<OrganizationDetailsUpdate> = {};
+  if (input.name !== undefined) {
+    details.name = normalizeOrganizationName(input.name);
+  }
+  if (input.code !== undefined) {
+    details.code = normalizeOrganizationCode(input.code);
+  }
+  if ("locationLabel" in input) {
+    details.locationLabel = input.locationLabel?.trim() || null;
+  }
+  if ("activeFrom" in input) {
+    details.activeFrom = input.activeFrom ?? null;
+  }
+  if ("activeUntil" in input) {
+    details.activeUntil = input.activeUntil ?? null;
+  }
+
+  if (
+    details.name === undefined &&
+    details.code === undefined &&
+    details.locationLabel === undefined &&
+    details.activeFrom === undefined &&
+    details.activeUntil === undefined
+  ) {
+    return {
+      name: current.name,
+      code: current.code,
+      locationLabel: current.locationLabel,
+      activeFrom: current.activeFrom,
+      activeUntil: current.activeUntil
+    };
+  }
+
+  return details;
+}
+
+type Mutable<T> = {
+  -readonly [K in keyof T]?: T[K];
+};
 
 function dateKey(value: Date | null): string | null {
   return value?.toISOString() ?? null;

@@ -4,7 +4,7 @@
 > **Pivot infrastructure v1.1 :** architecture pilote serverless à coût nul visé — Cloudflare Workers/OpenNext + Neon PostgreSQL + R2 + Clerk + Queues/Cron comme cible progressive. NestJS/Fastify retirés du MVP.
 
 **Version : 1.1 — 25 juillet 2026**  
-**Nom de travail : ScoutHub Région**  
+**Nom de travail : ScoutHub-PC**
 **Statut : spécification produit et technique de référence — prête pour démarrage Codex**  
 **Portée initiale : Région scoute pilote, avec architecture extensible vers une OSN**
 
@@ -14,7 +14,7 @@
 
 # 0. Résumé exécutif
 
-ScoutHub Région est une plateforme numérique conçue pour devenir progressivement le **socle opérationnel régional** du scoutisme. Le premier produit livrable n’est pas un ERP complet : c’est un module **Projects & Impact** centré sur la gestion de projets communautaires, Scouts for SDGs, preuves, validations, publication et suivi d’impact. Cette première brique crée les fondations réutilisables — identité, organisations, rôles, documents, audit, notifications, reporting — qui permettront ensuite d’ajouter membres, listes nominatives, assurance, événements, Programme des Jeunes, formations, partenaires et autres processus administratifs.
+ScoutHub-PC est une plateforme numérique conçue pour devenir progressivement le **socle opérationnel régional** du scoutisme. Le premier produit livrable n’est pas un ERP complet : c’est un module **Projects & Impact** centré sur la gestion de projets communautaires, Scouts for SDGs, preuves, validations, publication et suivi d’impact. Cette première brique crée les fondations réutilisables — identité, organisations, rôles, documents, audit, notifications, reporting — qui permettront ensuite d’ajouter membres, listes nominatives, assurance, événements, Programme des Jeunes, formations, partenaires et autres processus administratifs.
 
 La plateforme possède trois faces :
 
@@ -3249,7 +3249,7 @@ Créer :
 ## 40.3 Prompt de bootstrap Codex
 
 ```text
-Tu travailles sur ScoutHub Région.
+Tu travailles sur ScoutHub-PC.
 Lis AGENTS.md et docs/MASTER_SPEC.md avant toute modification.
 
 Objectif : Phase 0 uniquement.

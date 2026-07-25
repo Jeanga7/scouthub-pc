@@ -15,7 +15,7 @@ export const serverEnvSchema = z.object({
     .enum(["true", "false"])
     .default("false")
     .transform((value) => value === "true"),
-  NEXT_PUBLIC_APP_NAME: z.string().min(1).default("ScoutHub Region")
+  NEXT_PUBLIC_APP_NAME: z.string().min(1).default("ScoutHub-PC")
 });
 
 export type AppEnvironment = z.infer<typeof appEnvironmentSchema>;

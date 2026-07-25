@@ -19,6 +19,7 @@ export function buildOrganizationPath(
   parentPath: string | null,
   organizationId: string
 ): string {
+  // A trailing slash makes UUID segment prefix checks unambiguous for descendants.
   return parentPath === null ? `/${organizationId}/` : `${parentPath}${organizationId}/`;
 }
 

@@ -8,12 +8,14 @@ import {
   sql
 } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
+// pg resolves this package through the workerd condition for Cloudflare sockets.
+import "pg-cloudflare";
 import pg from "pg";
 import {
   auditEvent,
   organization
 } from "@scouthub/database";
-import { replacePathPrefix, type Organization } from "@scouthub/domain";
+import type { Organization } from "@scouthub/domain";
 import {
   ConflictError,
   type AuditEventInput,
@@ -130,6 +132,7 @@ class PgOrganizationTransaction implements OrganizationTransaction {
       return [];
     }
 
+    // Paths always end with "/" so a prefix scan matches complete UUID segments only.
     const rows = await this.db
       .select()
       .from(organization)
@@ -176,25 +179,27 @@ class PgOrganizationTransaction implements OrganizationTransaction {
     expectedVersion: number,
     input: OrganizationDetailsUpdate
   ): Promise<Organization | null> {
-    const rows = await this.db
-      .update(organization)
-      .set({
-        name: input.name,
-        code: input.code,
-        locationLabel: input.locationLabel,
-        activeFrom: input.activeFrom,
-        activeUntil: input.activeUntil,
-        version: sql`${organization.version} + 1`,
-        updatedAt: sql`now()`
-      })
-      .where(
-        and(
-          eq(organization.tenantId, tenantId),
-          eq(organization.id, organizationId),
-          eq(organization.version, expectedVersion)
+    const rows = await catchUniqueCodeConflict(() =>
+      this.db
+        .update(organization)
+        .set({
+          name: input.name,
+          code: input.code,
+          locationLabel: input.locationLabel,
+          activeFrom: input.activeFrom,
+          activeUntil: input.activeUntil,
+          version: sql`${organization.version} + 1`,
+          updatedAt: sql`now()`
+        })
+        .where(
+          and(
+            eq(organization.tenantId, tenantId),
+            eq(organization.id, organizationId),
+            eq(organization.version, expectedVersion)
+          )
         )
-      )
-      .returning();
+        .returning()
+    );
 
     return rows[0] === undefined ? null : mapOrganization(rows[0]);
   }
@@ -227,7 +232,7 @@ class PgOrganizationTransaction implements OrganizationTransaction {
     tenantId: string,
     input: MoveSubtreeInput
   ): Promise<Organization | null> {
-    const subtree = await this.db
+    const lockedSubtree = await this.db
       .select()
       .from(organization)
       .where(
@@ -239,26 +244,28 @@ class PgOrganizationTransaction implements OrganizationTransaction {
       .for("update")
       .orderBy(asc(organization.depth));
 
-    const current = subtree.find((row) => row.id === input.organizationId);
+    const current = lockedSubtree.find((row) => row.id === input.organizationId);
     if (current === undefined || current.version !== input.expectedVersion) {
       return null;
     }
 
-    for (const row of subtree) {
-      const nextPath = replacePathPrefix(row.path, input.oldPath, input.newPath);
-      const nextDepth = row.depth + input.depthDelta;
-      await this.db
-        .update(organization)
-        .set({
-          parentId:
-            row.id === input.organizationId ? input.newParentId : row.parentId,
-          path: nextPath,
-          depth: nextDepth,
-          version: sql`${organization.version} + 1`,
-          updatedAt: sql`now()`
-        })
-        .where(and(eq(organization.tenantId, tenantId), eq(organization.id, row.id)));
-    }
+    // The subtree is locked and rewritten in one statement so parent_id, path,
+    // depth and version stay atomic with the audit event in the surrounding transaction.
+    await this.db
+      .update(organization)
+      .set({
+        parentId: sql`CASE WHEN ${organization.id} = ${input.organizationId}::uuid THEN ${input.newParentId}::uuid ELSE ${organization.parentId} END`,
+        path: sql`${input.newPath} || substring(${organization.path} from ${input.oldPath.length + 1}::int)`,
+        depth: sql`${organization.depth} + ${input.depthDelta}`,
+        version: sql`${organization.version} + 1`,
+        updatedAt: sql`now()`
+      })
+      .where(
+        and(
+          eq(organization.tenantId, tenantId),
+          like(organization.path, `${input.oldPath}%`)
+        )
+      );
 
     return this.findById(tenantId, input.organizationId);
   }
@@ -313,14 +320,19 @@ async function catchUniqueCodeConflict<TResult>(
   try {
     return await operation();
   } catch (error) {
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "constraint" in error &&
-      error.constraint === "organization_tenant_code_unique"
-    ) {
+    if (hasConstraint(error, "organization_tenant_code_unique")) {
       throw new ConflictError("Organization code already exists in this tenant.");
     }
     throw error;
   }
+}
+
+function hasConstraint(error: unknown, constraint: string): boolean {
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+  if ("constraint" in error && error.constraint === constraint) {
+    return true;
+  }
+  return "cause" in error && hasConstraint(error.cause, constraint);
 }

@@ -34,7 +34,7 @@ The hierarchy uses a text materialized path built from UUIDs:
 
 Codes and names are deliberately excluded from the path so renames do not rewrite a subtree. `depth` is stored with the row for deterministic queries and display.
 
-We do not use PostgreSQL `ltree` in Slice 1. A portable text path with indexes is enough for the pilot and avoids adding an extension.
+We do not use PostgreSQL `ltree` in Slice 1. A portable text path with indexes is enough for the pilot and avoids adding an extension. The PostgreSQL index on `(tenant_id, path text_pattern_ops)` is chosen because descendant queries use `path LIKE '<uuid-prefix>%'`; `text_pattern_ops` keeps that prefix search indexable across collations.
 
 Moving an organization is transactional. The repository locks the moved node, the new parent and the subtree rows, validates tenant, type and cycle rules, then rewrites paths and depths for the subtree in the same transaction as the audit event.
 

@@ -27,7 +27,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const query = tenantQuerySchema.parse(
       Object.fromEntries(new URL(request.url).searchParams)
     );
-    const organizationUseCases = await createOrganizationUseCases();
+    const organizationUseCases = createOrganizationUseCases();
     const organization = await organizationUseCases.getOrganization(
       query.tenantId,
       organizationId
@@ -49,12 +49,18 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     const params = await context.params;
     const organizationId = uuidSchema.parse(params.id);
     const payload = updateOrganizationRequestSchema.parse(await request.json());
-    const organizationUseCases = await createOrganizationUseCases();
+    const organizationUseCases = createOrganizationUseCases();
     const organization = await organizationUseCases.updateOrganization({
       ...payload,
       organizationId,
-      activeFrom: payload.activeFrom === undefined || payload.activeFrom === null ? null : new Date(payload.activeFrom),
-      activeUntil: payload.activeUntil === undefined || payload.activeUntil === null ? null : new Date(payload.activeUntil),
+      activeFrom:
+        payload.activeFrom === undefined
+          ? undefined
+          : payload.activeFrom === null ? null : new Date(payload.activeFrom),
+      activeUntil:
+        payload.activeUntil === undefined
+          ? undefined
+          : payload.activeUntil === null ? null : new Date(payload.activeUntil),
       requestId: id
     });
     return jsonResponse(mapOrganization(organization), id);

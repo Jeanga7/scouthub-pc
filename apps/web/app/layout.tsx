@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import "./styles.css";
 
 export const metadata: Metadata = {
-  title: "ScoutHub Region",
+  title: "ScoutHub-PC",
   description: "Plateforme numerique regionale du scoutisme"
 };
 

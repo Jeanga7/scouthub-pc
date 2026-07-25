@@ -143,6 +143,7 @@ describe("PgOrganizationRepository", () => {
   it("moves a subtree atomically and recalculates paths and depths", async () => {
     const useCases = await createAlphaTree();
     const before = await useCases.getOrganization(ids.alpha, ids.groupX);
+    const unitBefore = await useCases.getOrganization(ids.alpha, ids.unitOne);
     const moved = await useCases.moveOrganization({
       tenantId: ids.alpha,
       organizationId: ids.groupX,
@@ -156,8 +157,11 @@ describe("PgOrganizationRepository", () => {
     expect(movedUnit.path).toBe(
       `/${ids.alpha}/${ids.region}/${ids.districtB}/${ids.groupX}/${ids.unitOne}/`
     );
+    expect(movedUnit.name).toBe(unitBefore.name);
+    expect(movedUnit.code).toBe(unitBefore.code);
     expect(movedUnit.depth).toBe(4);
     expect(moved.version).toBe(before.version + 1);
+    expect(movedUnit.version).toBe(unitBefore.version + 1);
 
     await expect(
       useCases.moveOrganization({
@@ -256,6 +260,53 @@ describe("PgOrganizationRepository", () => {
     } finally {
       await pool.end();
     }
+  });
+
+  it("applies PATCH semantics and maps duplicate code updates to conflicts", async () => {
+    const useCases = await createAlphaTree();
+    const group = await useCases.getOrganization(ids.alpha, ids.groupX);
+    const groupDirect = await useCases.getOrganization(ids.alpha, ids.groupDirect);
+    const activeFrom = new Date("2026-01-01T00:00:00.000Z");
+    const activeUntil = new Date("2026-12-31T00:00:00.000Z");
+
+    const withDetails = await useCases.updateOrganization({
+      tenantId: ids.alpha,
+      organizationId: group.id,
+      expectedVersion: group.version,
+      locationLabel: "Local fictif",
+      activeFrom,
+      activeUntil
+    });
+    const renamed = await useCases.updateOrganization({
+      tenantId: ids.alpha,
+      organizationId: group.id,
+      expectedVersion: withDetails.version,
+      name: "Group X nouveau nom"
+    });
+
+    expect(renamed.name).toBe("Group X nouveau nom");
+    expect(renamed.code).toBe(group.code);
+    expect(renamed.locationLabel).toBe("Local fictif");
+    expect(renamed.activeFrom?.toISOString()).toBe(activeFrom.toISOString());
+    expect(renamed.activeUntil?.toISOString()).toBe(activeUntil.toISOString());
+
+    const cleared = await useCases.updateOrganization({
+      tenantId: ids.alpha,
+      organizationId: group.id,
+      expectedVersion: renamed.version,
+      locationLabel: null
+    });
+    expect(cleared.locationLabel).toBeNull();
+    expect(cleared.activeFrom?.toISOString()).toBe(activeFrom.toISOString());
+
+    await expect(
+      useCases.updateOrganization({
+        tenantId: ids.alpha,
+        organizationId: group.id,
+        expectedVersion: cleared.version,
+        code: groupDirect.code
+      })
+    ).rejects.toThrow("already exists");
   });
 });
 

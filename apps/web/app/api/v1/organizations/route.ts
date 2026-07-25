@@ -19,7 +19,7 @@ export async function POST(request: Request) {
   const id = requestId(request);
   try {
     const payload = createOrganizationRequestSchema.parse(await request.json());
-    const organizationUseCases = await createOrganizationUseCases();
+    const organizationUseCases = createOrganizationUseCases();
     const organization = await organizationUseCases.createOrganization({
       ...payload,
       activeFrom: payload.activeFrom === undefined || payload.activeFrom === null ? null : new Date(payload.activeFrom),

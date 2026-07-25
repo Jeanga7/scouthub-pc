@@ -21,7 +21,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const params = await context.params;
     const organizationId = uuidSchema.parse(params.id);
     const payload = moveOrganizationRequestSchema.parse(await request.json());
-    const organizationUseCases = await createOrganizationUseCases();
+    const organizationUseCases = createOrganizationUseCases();
     const organization = await organizationUseCases.moveOrganization({
       ...payload,
       organizationId,

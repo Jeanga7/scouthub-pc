@@ -18,6 +18,7 @@
     "@scouthub/database": "workspace:*",
     "@scouthub/domain": "workspace:*",
     "drizzle-orm": "^0.45.2",
-    "pg": "^8.16.3"
+    "pg": "^8.16.3",
+    "pg-cloudflare": "^1.4.0"
   }
 }

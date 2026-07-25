@@ -19,6 +19,7 @@ export function assertDevAdmin(request: Request): Response | null {
     return null;
   }
 
+  // Until Slice 2 authz exists, the local admin surface is hidden outside local/test.
   return problemResponse({
     requestId: requestId(request),
     status: 404,

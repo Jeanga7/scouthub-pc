@@ -23,7 +23,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const query = tenantQuerySchema.parse(
       Object.fromEntries(new URL(request.url).searchParams)
     );
-    const organizationUseCases = await createOrganizationUseCases();
+    const organizationUseCases = createOrganizationUseCases();
     const organizations = await organizationUseCases.listDescendants(
       query.tenantId,
       organizationId

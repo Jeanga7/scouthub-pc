@@ -34,7 +34,7 @@ jobs:
     env:
       APP_ENV: test
       DATABASE_URL: postgres://scouthub:scouthub@localhost:5432/scouthub
-      NEXT_PUBLIC_APP_NAME: ScoutHub Region
+      NEXT_PUBLIC_APP_NAME: ScoutHub-PC
       ENABLE_DEV_ADMIN: "true"
 
     steps:
