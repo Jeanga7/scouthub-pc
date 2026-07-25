@@ -17,3 +17,22 @@ export type {
   BaseRepository,
   TransactionContext
 } from "./ports/repository";
+export type {
+  MoveSubtreeInput,
+  OrganizationDetailsUpdate,
+  OrganizationInsert,
+  OrganizationRepository,
+  OrganizationTransaction
+} from "./ports/organization-repository";
+export {
+  ApplicationError,
+  ConflictError,
+  NotFoundError,
+  ValidationError
+} from "./organization/errors";
+export type {
+  AuditEventInput,
+  OrganizationAuditAction,
+  RequestContext
+} from "./organization/audit";
+export { OrganizationUseCases, type IdGenerator } from "./organization/use-cases";

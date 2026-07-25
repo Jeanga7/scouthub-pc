@@ -10,13 +10,16 @@
     "dev": "next dev",
     "lint": "eslint .",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run --passWithNoTests --exclude \"src/**/*.integration.test.ts\"",
+    "test:integration": "vitest run --passWithNoTests src/organizations/dev-admin.integration.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@scouthub/application": "workspace:*",
     "@scouthub/config": "workspace:*",
     "@scouthub/contracts": "workspace:*",
+    "@scouthub/domain": "workspace:*",
+    "@scouthub/infrastructure": "workspace:*",
     "@scouthub/observability": "workspace:*",
     "@scouthub/ui": "workspace:*",
     "next": "16.2.11",

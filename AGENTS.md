@@ -91,6 +91,7 @@ For business-critical async work:
 - No `any` without an explicit, justified comment.
 - Tests are required for domain rules, workflows and authorization boundaries.
 - Prefer deterministic state machines over ad-hoc status mutation.
+- Comment non-obvious invariants, security boundaries, transactional/locking logic, materialized-path assumptions and provider/runtime workarounds. Do not add comments that merely restate the code.
 - Run lint, typecheck, tests, migrations and Cloudflare/OpenNext build before declaring a task complete.
 
 ## Scope discipline
