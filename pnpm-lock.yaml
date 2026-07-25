@@ -109,6 +109,9 @@ importers:
 
   packages/application:
     dependencies:
+      '@scouthub/authz':
+        specifier: workspace:*
+        version: link:../authz
       '@scouthub/domain':
         specifier: workspace:*
         version: link:../domain

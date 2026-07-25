@@ -51,7 +51,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       payload.tenantId,
       organizationId
     );
-    await authorizeOrganization({
+    const actor = await authorizeOrganization({
       request,
       requestId: id,
       action: "organization.update",
@@ -61,7 +61,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       mapUpdateOrganizationRequest({
         payload,
         organizationId,
-        requestId: id
+        requestId: id,
+        actor
       })
     );
     return jsonResponse(mapOrganization(organization), id);

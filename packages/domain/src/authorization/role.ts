@@ -63,3 +63,72 @@ export function isRoleAssignmentActive(
   );
 }
 
+export interface Slice2RoleScopeRule {
+  readonly roleCode: RoleCode;
+  readonly scopeType: RoleScopeType;
+  readonly organizationType: OrganizationType;
+  readonly grantableByRegionalAdmin: boolean;
+}
+
+const slice2RoleScopeRules = [
+  {
+    roleCode: "UNIT_LEADER",
+    scopeType: "UNIT",
+    organizationType: "UNIT",
+    grantableByRegionalAdmin: true
+  },
+  {
+    roleCode: "GROUP_ADMIN",
+    scopeType: "GROUP",
+    organizationType: "GROUP",
+    grantableByRegionalAdmin: true
+  },
+  {
+    roleCode: "DISTRICT_REVIEWER",
+    scopeType: "DISTRICT",
+    organizationType: "DISTRICT",
+    grantableByRegionalAdmin: true
+  },
+  {
+    roleCode: "REGIONAL_PROGRAMME_REVIEWER",
+    scopeType: "REGION",
+    organizationType: "REGION",
+    grantableByRegionalAdmin: true
+  },
+  {
+    roleCode: "REGIONAL_ADMIN",
+    scopeType: "REGION",
+    organizationType: "REGION",
+    grantableByRegionalAdmin: true
+  },
+  {
+    roleCode: "REGIONAL_COMMS",
+    scopeType: "REGION",
+    organizationType: "REGION",
+    grantableByRegionalAdmin: true
+  },
+  {
+    roleCode: "DATA_OFFICER",
+    scopeType: "REGION",
+    organizationType: "REGION",
+    grantableByRegionalAdmin: true
+  }
+] as const satisfies readonly Slice2RoleScopeRule[];
+
+export function getSlice2RoleScopeRule(
+  roleCode: RoleCode
+): Slice2RoleScopeRule | null {
+  return (
+    slice2RoleScopeRules.find((rule) => rule.roleCode === roleCode) ?? null
+  );
+}
+
+export function deriveSlice2ScopeType(roleCode: RoleCode): RoleScopeType | null {
+  return getSlice2RoleScopeRule(roleCode)?.scopeType ?? null;
+}
+
+export function isSlice2GrantableRole(roleCode: RoleCode): boolean {
+  return getSlice2RoleScopeRule(roleCode)?.grantableByRegionalAdmin ?? false;
+}
+import type { OrganizationType } from "../organization/organization-type";
+

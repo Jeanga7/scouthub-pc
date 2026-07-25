@@ -5,7 +5,8 @@ import type {
   PermissionCode,
   RoleAssignment,
   RoleCode,
-  RoleScopeType
+  RoleScopeType,
+  OrganizationType
 } from "@scouthub/domain";
 import type { AuditEventInput } from "../organization/audit";
 
@@ -36,6 +37,19 @@ export interface InviteAdultUserRecord {
 export interface CreatedInvitationDraft {
   readonly invitation: AccountInvitation;
   readonly roleId: string;
+}
+
+export interface ScopedOrganizationResource {
+  readonly tenantId: string;
+  readonly organizationId: string;
+  readonly type: OrganizationType;
+  readonly path: string;
+}
+
+export interface AccountAdministrationView {
+  readonly account: Account;
+  readonly person: Person | null;
+  readonly assignments: readonly RoleAssignment[];
 }
 
 export interface BootstrapRegionalAdminInput {
@@ -72,26 +86,32 @@ export interface IdentityRepository {
 
 export interface IdentityTransaction {
   findActorBySubject(subjectId: string): Promise<ActorContext | null>;
+  findActorBySubjectForUpdate(subjectId: string): Promise<ActorContext | null>;
   findAccountById(accountId: string): Promise<Account | null>;
   findAccountBySubjectForUpdate(subjectId: string): Promise<Account | null>;
   findInvitationForUpdate(invitationId: string): Promise<AccountInvitation | null>;
   createInvitationDraft(input: InviteAdultUserRecord): Promise<CreatedInvitationDraft>;
   markInvitationPending(invitationId: string, externalInvitationId: string): Promise<AccountInvitation>;
+  simulateNextPendingFailure(): void;
   markInvitationFailed(invitationId: string): Promise<void>;
   acceptInvitation(input: {
     readonly invitationId: string;
     readonly subjectId: string;
     readonly emailVerifiedAt: Date;
     readonly roleAssignmentId: string;
+    readonly scopeType: RoleScopeType;
   }): Promise<ActorContext>;
   listInvitations(tenantId: string): Promise<AccountInvitation[]>;
+  listInvitationsForScopes(tenantId: string, scopePaths: readonly string[]): Promise<AccountInvitation[]>;
   revokeInvitation(input: {
     readonly tenantId: string;
     readonly invitationId: string;
     readonly revokedByAccountId: string;
   }): Promise<AccountInvitation | null>;
   listRoleAssignments(tenantId: string): Promise<RoleAssignment[]>;
+  listRoleAssignmentsForScopes(tenantId: string, scopePaths: readonly string[]): Promise<RoleAssignment[]>;
   createRoleAssignment(input: CreateRoleAssignmentInput): Promise<RoleAssignment>;
+  findRoleAssignmentForUpdate(tenantId: string, roleAssignmentId: string): Promise<RoleAssignment | null>;
   revokeRoleAssignment(input: {
     readonly tenantId: string;
     readonly roleAssignmentId: string;
@@ -102,14 +122,11 @@ export interface IdentityTransaction {
     readonly tenantId: string;
     readonly accountId: string;
   }): Promise<Account | null>;
+  listAccountsForScopes(tenantId: string, scopePaths: readonly string[]): Promise<AccountAdministrationView[]>;
+  findAccountAdministrationViewForUpdate(accountId: string): Promise<AccountAdministrationView | null>;
   countActiveRegionalAdmins(tenantId: string, regionOrganizationId: string, now: Date): Promise<number>;
   bootstrapRegionalAdmin(input: BootstrapRegionalAdminInput): Promise<ActorContext>;
-  findOrganizationResource(tenantId: string, organizationId: string): Promise<{
-    readonly tenantId: string;
-    readonly organizationId: string;
-    readonly path: string;
-  } | null>;
+  findOrganizationResource(tenantId: string, organizationId: string): Promise<ScopedOrganizationResource | null>;
   getRolePermissions(roleCode: RoleCode): Promise<readonly PermissionCode[]>;
   appendAuditEvent(input: AuditEventInput): Promise<void>;
 }
-

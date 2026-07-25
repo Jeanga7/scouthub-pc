@@ -13,6 +13,7 @@ BOOTSTRAP_LAST_NAME=Regional \
 TENANT_ID=<nso-uuid> \
 REGION_ORG_ID=<region-uuid> \
 DATABASE_URL=postgres://... \
+CLERK_SECRET_KEY=sk_... \
 pnpm identity:bootstrap-regional-admin
 ```
 
@@ -20,13 +21,14 @@ pnpm identity:bootstrap-regional-admin
 
 - The tenant NSO already exists.
 - `REGION_ORG_ID` belongs to the tenant.
-- The Clerk user exists and the provided email is verified in Clerk.
+- The command fetches the Clerk user before any DB mutation, verifies the subject exists, checks the primary email is verified, and compares it with `BOOTSTRAP_EMAIL`.
 - No active RegionalAdmin already exists for that region.
 - The command is run by an operator authorized by the institution.
 
 ## Safety Rules
 
 - `BOOTSTRAP_CONFIRM=true` is mandatory.
+- `CLERK_SECRET_KEY` is mandatory for the live command and must never be logged.
 - The command must not log database credentials, Clerk secrets or tokens.
 - A second active RegionalAdmin bootstrap for the same region is refused.
 - Break-glass replacement of the last RegionalAdmin is outside Slice 2.

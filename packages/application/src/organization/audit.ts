@@ -21,6 +21,12 @@ export const identityAuditActions = [
 export type OrganizationAuditAction = (typeof organizationAuditActions)[number];
 export type IdentityAuditAction = (typeof identityAuditActions)[number];
 export type AuditAction = OrganizationAuditAction | IdentityAuditAction;
+export type AuditActorKind = "SYSTEM" | "USER" | "SERVICE";
+
+export interface AuditActor {
+  readonly kind: AuditActorKind;
+  readonly id: string | null;
+}
 
 export interface AuditEventInput {
   readonly id: string;
@@ -28,7 +34,7 @@ export interface AuditEventInput {
   readonly resourceType: "organization" | "account" | "invitation" | "role_assignment";
   readonly resourceId: string;
   readonly action: AuditAction;
-  readonly actorKind: "SYSTEM";
+  readonly actorKind: AuditActorKind;
   readonly actorId: string | null;
   readonly requestId: string | null;
   readonly metadata: Record<string, unknown>;
@@ -37,6 +43,7 @@ export interface AuditEventInput {
 
 export interface RequestContext {
   readonly requestId?: string;
+  readonly auditActor?: AuditActor;
 }
 
 export function createOrganizationAuditEvent(input: {
@@ -46,6 +53,7 @@ export function createOrganizationAuditEvent(input: {
   readonly action: AuditAction;
   readonly metadata: Record<string, unknown>;
   readonly requestId?: string;
+  readonly auditActor?: AuditActor;
 }): AuditEventInput {
   return createAuditEvent({
     ...input,
@@ -61,15 +69,17 @@ export function createAuditEvent(input: {
   readonly action: AuditAction;
   readonly metadata: Record<string, unknown>;
   readonly requestId?: string;
+  readonly auditActor?: AuditActor;
 }): AuditEventInput {
+  const actor = input.auditActor ?? { kind: "SYSTEM", id: null };
   return {
     id: input.id,
     tenantId: input.tenantId,
     resourceType: input.resourceType,
     resourceId: input.resourceId,
     action: input.action,
-    actorKind: "SYSTEM",
-    actorId: null,
+    actorKind: actor.kind,
+    actorId: actor.id,
     requestId: input.requestId ?? null,
     metadata: input.metadata,
     occurredAt: new Date()

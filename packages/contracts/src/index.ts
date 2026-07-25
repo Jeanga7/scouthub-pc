@@ -200,8 +200,7 @@ export const createRoleAssignmentRequestSchema = z.object({
   tenantId: uuidSchema,
   accountId: uuidSchema,
   roleCode: roleCodeSchema,
-  scopeType: roleScopeTypeSchema,
-  scopeOrgId: uuidSchema.nullable(),
+  scopeOrgId: uuidSchema,
   startsAt: z.iso.datetime(),
   endsAt: z.iso.datetime().nullable().optional()
 }).strict();
@@ -217,6 +216,21 @@ export const roleAssignmentResponseSchema = z.object({
   startsAt: z.iso.datetime(),
   endsAt: z.iso.datetime().nullable(),
   revokedAt: z.iso.datetime().nullable()
+});
+
+export const accountAdministrationResponseSchema = z.object({
+  account: z.object({
+    id: uuidSchema,
+    primaryEmail: z.string(),
+    status: z.enum(["INVITED", "ACTIVE", "SUSPENDED", "DISABLED", "ANONYMIZED"])
+  }),
+  person: z.object({
+    id: uuidSchema,
+    tenantId: uuidSchema,
+    displayName: z.string(),
+    classification: z.literal("P2")
+  }).nullable(),
+  activeRoleAssignments: z.array(roleAssignmentResponseSchema)
 });
 
 export const revokeRoleAssignmentRequestSchema = z.object({
@@ -246,7 +260,10 @@ export type CreateOrganizationRequest = z.infer<typeof createOrganizationRequest
 export type UpdateOrganizationRequest = z.infer<typeof updateOrganizationRequestSchema>;
 export type MoveOrganizationRequest = z.infer<typeof moveOrganizationRequestSchema>;
 export type InviteAdultUserRequest = z.infer<typeof inviteAdultUserRequestSchema>;
+export type InvitationResponse = z.infer<typeof invitationResponseSchema>;
 export type CreateRoleAssignmentRequest = z.infer<typeof createRoleAssignmentRequestSchema>;
+export type RoleAssignmentResponse = z.infer<typeof roleAssignmentResponseSchema>;
+export type AccountAdministrationResponse = z.infer<typeof accountAdministrationResponseSchema>;
 export type RevokeRoleAssignmentRequest = z.infer<typeof revokeRoleAssignmentRequestSchema>;
 export type RevokeInvitationRequest = z.infer<typeof revokeInvitationRequestSchema>;
 export type SuspendAccountRequest = z.infer<typeof suspendAccountRequestSchema>;

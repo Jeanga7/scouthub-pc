@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Account, PermissionCode, RoleCode } from "@scouthub/domain";
-import { canAccessOrganization, type Actor } from ".";
+import {
+  canAccessOrganization,
+  canAccessScopedAction,
+  validateSlice2RoleScope,
+  type Actor
+} from ".";
 
 const now = new Date("2026-07-25T12:00:00.000Z");
 const tenantA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
@@ -57,6 +62,62 @@ describe("organization policy engine", () => {
     );
 
     expect(decision.effect).toBe("deny");
+  });
+
+  it("does not combine permission from one assignment with scope from another", () => {
+    const regionBPath = `/${tenantA}/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9/`;
+    const baseActor = actor("REGIONAL_ADMIN", regionAPath);
+    const baseAssignment = baseActor.assignments[0];
+    if (baseAssignment === undefined) {
+      throw new Error("Expected base assignment.");
+    }
+    const testActor: Actor = {
+      ...baseActor,
+      assignments: [
+        ...baseActor.assignments,
+        {
+          ...baseAssignment,
+          id: "readonly-region-b",
+          roleCode: "REGIONAL_COMMS",
+          permissions: ["organization.read"],
+          scopeOrgId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9",
+          scopePath: regionBPath
+        }
+      ]
+    };
+
+    const decision = canAccessScopedAction(
+      testActor,
+      "role.assign",
+      {
+        tenantId: tenantA,
+        organizationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9",
+        path: regionBPath
+      },
+      { now }
+    );
+
+    expect(decision.effect).toBe("deny");
+  });
+
+  it.each([
+    ["UNIT_LEADER", "UNIT", true],
+    ["GROUP_ADMIN", "GROUP", true],
+    ["DISTRICT_REVIEWER", "DISTRICT", true],
+    ["REGIONAL_PROGRAMME_REVIEWER", "REGION", true],
+    ["REGIONAL_ADMIN", "REGION", true],
+    ["REGIONAL_COMMS", "REGION", true],
+    ["DATA_OFFICER", "REGION", true],
+    ["GROUP_ADMIN", "REGION", false],
+    ["UNIT_LEADER", "GROUP", false],
+    ["DISTRICT_REVIEWER", "GROUP", false],
+    ["REGIONAL_ADMIN", "GROUP", false],
+    ["PROJECT_CONTRIBUTOR", "GROUP", false],
+    ["PLATFORM_ADMIN", "REGION", false],
+    ["NATIONAL_OBSERVER", "NSO", false]
+  ] as const)("validates Slice 2 role scope matrix: %s on %s", (roleCode, organizationType, ok) => {
+    const result = validateSlice2RoleScope({ roleCode, organizationType });
+    expect("ok" in result).toBe(ok);
   });
 });
 

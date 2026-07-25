@@ -1,3 +1,5 @@
+import type { RoleCode } from "../authorization/role";
+
 export type AccountInvitationStatus =
   | "CREATING"
   | "PENDING"
@@ -13,7 +15,7 @@ export interface AccountInvitation {
   readonly personId: string;
   readonly email: string;
   readonly intendedRoleId: string;
-  readonly intendedRoleCode: string;
+  readonly intendedRoleCode: RoleCode;
   readonly intendedScopeOrgId: string;
   readonly status: AccountInvitationStatus;
   readonly externalInvitationId: string | null;
@@ -33,4 +35,3 @@ export function canProvisionInvitation(
 ): boolean {
   return invitation.status === "PENDING" && invitation.expiresAt > now;
 }
-

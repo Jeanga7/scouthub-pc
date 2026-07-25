@@ -65,6 +65,7 @@ CREATE TABLE "person" (
 	"status" "person_status" DEFAULT 'ACTIVE' NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "person_id_tenant_unique" UNIQUE("id","tenant_id"),
 	CONSTRAINT "person_first_name_not_empty" CHECK (length(btrim("person"."first_name")) > 0),
 	CONSTRAINT "person_last_name_not_empty" CHECK (length(btrim("person"."last_name")) > 0),
 	CONSTRAINT "person_display_name_not_empty" CHECK (length(btrim("person"."display_name")) > 0)
@@ -109,18 +110,26 @@ CREATE TABLE "role_permission" (
 --> statement-breakpoint
 ALTER TABLE "account_invitation" ADD CONSTRAINT "account_invitation_tenant_fk" FOREIGN KEY ("tenant_id") REFERENCES "public"."organization"("id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
 ALTER TABLE "account_invitation" ADD CONSTRAINT "account_invitation_account_fk" FOREIGN KEY ("account_id") REFERENCES "public"."account"("id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
+ALTER TABLE "account_invitation" ADD CONSTRAINT "account_invitation_account_tenant_fk" FOREIGN KEY ("account_id","tenant_id") REFERENCES "public"."account_person_link"("account_id","tenant_id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
 ALTER TABLE "account_invitation" ADD CONSTRAINT "account_invitation_person_fk" FOREIGN KEY ("person_id") REFERENCES "public"."person"("id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
+ALTER TABLE "account_invitation" ADD CONSTRAINT "account_invitation_person_tenant_fk" FOREIGN KEY ("person_id","tenant_id") REFERENCES "public"."person"("id","tenant_id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
 ALTER TABLE "account_invitation" ADD CONSTRAINT "account_invitation_intended_role_fk" FOREIGN KEY ("intended_role_id") REFERENCES "public"."role_definition"("id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
 ALTER TABLE "account_invitation" ADD CONSTRAINT "account_invitation_scope_org_same_tenant_fk" FOREIGN KEY ("intended_scope_org_id","tenant_id") REFERENCES "public"."organization"("id","tenant_id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
 ALTER TABLE "account_invitation" ADD CONSTRAINT "account_invitation_invited_by_fk" FOREIGN KEY ("invited_by_account_id") REFERENCES "public"."account"("id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
+ALTER TABLE "account_invitation" ADD CONSTRAINT "account_invitation_invited_by_tenant_fk" FOREIGN KEY ("invited_by_account_id","tenant_id") REFERENCES "public"."account_person_link"("account_id","tenant_id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
+ALTER TABLE "account_invitation" ADD CONSTRAINT "account_invitation_adult_attested_by_tenant_fk" FOREIGN KEY ("adult_eligibility_attested_by","tenant_id") REFERENCES "public"."account_person_link"("account_id","tenant_id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
 ALTER TABLE "account_person_link" ADD CONSTRAINT "account_person_link_account_fk" FOREIGN KEY ("account_id") REFERENCES "public"."account"("id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
 ALTER TABLE "account_person_link" ADD CONSTRAINT "account_person_link_person_fk" FOREIGN KEY ("person_id") REFERENCES "public"."person"("id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
+ALTER TABLE "account_person_link" ADD CONSTRAINT "account_person_link_person_tenant_fk" FOREIGN KEY ("person_id","tenant_id") REFERENCES "public"."person"("id","tenant_id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
 ALTER TABLE "account_person_link" ADD CONSTRAINT "account_person_link_tenant_fk" FOREIGN KEY ("tenant_id") REFERENCES "public"."organization"("id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
 ALTER TABLE "person" ADD CONSTRAINT "person_tenant_fk" FOREIGN KEY ("tenant_id") REFERENCES "public"."organization"("id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
 ALTER TABLE "role_assignment" ADD CONSTRAINT "role_assignment_tenant_fk" FOREIGN KEY ("tenant_id") REFERENCES "public"."organization"("id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
 ALTER TABLE "role_assignment" ADD CONSTRAINT "role_assignment_account_fk" FOREIGN KEY ("account_id") REFERENCES "public"."account"("id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
+ALTER TABLE "role_assignment" ADD CONSTRAINT "role_assignment_account_tenant_fk" FOREIGN KEY ("account_id","tenant_id") REFERENCES "public"."account_person_link"("account_id","tenant_id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
 ALTER TABLE "role_assignment" ADD CONSTRAINT "role_assignment_role_fk" FOREIGN KEY ("role_id") REFERENCES "public"."role_definition"("id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
 ALTER TABLE "role_assignment" ADD CONSTRAINT "role_assignment_scope_org_same_tenant_fk" FOREIGN KEY ("scope_org_id","tenant_id") REFERENCES "public"."organization"("id","tenant_id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
+ALTER TABLE "role_assignment" ADD CONSTRAINT "role_assignment_granted_by_tenant_fk" FOREIGN KEY ("granted_by_account_id","tenant_id") REFERENCES "public"."account_person_link"("account_id","tenant_id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
+ALTER TABLE "role_assignment" ADD CONSTRAINT "role_assignment_revoked_by_tenant_fk" FOREIGN KEY ("revoked_by_account_id","tenant_id") REFERENCES "public"."account_person_link"("account_id","tenant_id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
 ALTER TABLE "role_permission" ADD CONSTRAINT "role_permission_role_fk" FOREIGN KEY ("role_id") REFERENCES "public"."role_definition"("id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
 ALTER TABLE "role_permission" ADD CONSTRAINT "role_permission_permission_fk" FOREIGN KEY ("permission_id") REFERENCES "public"."permission_definition"("id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
 CREATE UNIQUE INDEX "account_external_identity_unique" ON "account" USING btree ("external_identity_id") WHERE "account"."external_identity_id" IS NOT NULL;--> statement-breakpoint

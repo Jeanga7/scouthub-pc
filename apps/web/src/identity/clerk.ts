@@ -5,17 +5,28 @@ import type { IdentityProfile, IdentitySession } from "@scouthub/application";
 export function createClerkIdentityProvider() {
   return createClerkIdentityProviderAdapter({
     async getSession(): Promise<IdentitySession | null> {
-      const state = await auth();
+      const state = await auth({ acceptsToken: "session_token" });
       if (state.userId === null || state.sessionId === null) {
         return null;
       }
+      const claims = state.sessionClaims as ClerkSessionClaims;
+      const firstFactorAgeMinutes = factorAge(claims.fva, 0);
+      const secondFactorAgeMinutes = factorAge(claims.fva, 1);
 
       return {
         sessionId: state.sessionId,
         subjectId: state.userId,
-        assuranceLevel: "standard",
-        issuedAt: new Date(),
-        expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+        assuranceLevel:
+          secondFactorAgeMinutes !== undefined && secondFactorAgeMinutes >= 0
+            ? "mfa"
+            : "standard",
+        issuedAt: unixSecondsToDate(claims.iat),
+        expiresAt: unixSecondsToDate(claims.exp),
+        firstFactorAgeMinutes,
+        secondFactorAgeMinutes,
+        // Clerk impersonation/support actor mode is intentionally not mapped to
+        // ScoutHub business rights; Slice 2 has no support impersonation policy.
+        impersonated: claims.act !== undefined || claims.actor !== undefined
       };
     },
     async getIdentityProfile(subjectId): Promise<IdentityProfile | null> {
@@ -75,3 +86,19 @@ function metadataString(metadata: UserPublicMetadata, key: string): string | nul
 
 type UserPublicMetadata = Record<string, unknown>;
 
+type ClerkSessionClaims = {
+  readonly iat?: number;
+  readonly exp?: number;
+  readonly fva?: readonly unknown[];
+  readonly act?: unknown;
+  readonly actor?: unknown;
+};
+
+function unixSecondsToDate(value: number | undefined): Date {
+  return new Date((value ?? 0) * 1000);
+}
+
+function factorAge(values: readonly unknown[] | undefined, index: number): number | undefined {
+  const value = values?.[index];
+  return typeof value === "number" ? value : undefined;
+}

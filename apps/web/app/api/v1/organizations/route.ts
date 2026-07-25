@@ -19,7 +19,7 @@ export async function POST(request: Request) {
       payload.tenantId,
       payload.parentId
     );
-    await authorizeOrganization({
+    const actor = await authorizeOrganization({
       request,
       requestId: id,
       action: "organization.create",
@@ -29,7 +29,8 @@ export async function POST(request: Request) {
       ...payload,
       activeFrom: payload.activeFrom === undefined || payload.activeFrom === null ? null : new Date(payload.activeFrom),
       activeUntil: payload.activeUntil === undefined || payload.activeUntil === null ? null : new Date(payload.activeUntil),
-      requestId: id
+      requestId: id,
+      auditActor: { kind: "USER", id: actor.account.id }
     });
     return jsonResponse(mapOrganization(organization), id, { status: 201 });
   } catch (error) {

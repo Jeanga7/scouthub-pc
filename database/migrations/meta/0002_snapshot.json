@@ -1,6 +1,6 @@
 {
-  "id": "e92ec6e8-ed01-4417-beab-f59cba004494",
-  "prevId": "7df74b1a-2d50-4d56-b4f9-0e5b6ebe7075",
+  "id": "4d565691-190c-4817-abe6-c0aa3764fed4",
+  "prevId": "e92ec6e8-ed01-4417-beab-f59cba004494",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -315,6 +315,21 @@
           "onDelete": "restrict",
           "onUpdate": "restrict"
         },
+        "account_invitation_account_tenant_fk": {
+          "name": "account_invitation_account_tenant_fk",
+          "tableFrom": "account_invitation",
+          "tableTo": "account_person_link",
+          "columnsFrom": [
+            "account_id",
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "account_id",
+            "tenant_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "restrict"
+        },
         "account_invitation_person_fk": {
           "name": "account_invitation_person_fk",
           "tableFrom": "account_invitation",
@@ -324,6 +339,21 @@
           ],
           "columnsTo": [
             "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "restrict"
+        },
+        "account_invitation_person_tenant_fk": {
+          "name": "account_invitation_person_tenant_fk",
+          "tableFrom": "account_invitation",
+          "tableTo": "person",
+          "columnsFrom": [
+            "person_id",
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id"
           ],
           "onDelete": "restrict",
           "onUpdate": "restrict"
@@ -365,6 +395,36 @@
           ],
           "columnsTo": [
             "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "restrict"
+        },
+        "account_invitation_invited_by_tenant_fk": {
+          "name": "account_invitation_invited_by_tenant_fk",
+          "tableFrom": "account_invitation",
+          "tableTo": "account_person_link",
+          "columnsFrom": [
+            "invited_by_account_id",
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "account_id",
+            "tenant_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "restrict"
+        },
+        "account_invitation_adult_attested_by_tenant_fk": {
+          "name": "account_invitation_adult_attested_by_tenant_fk",
+          "tableFrom": "account_invitation",
+          "tableTo": "account_person_link",
+          "columnsFrom": [
+            "adult_eligibility_attested_by",
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "account_id",
+            "tenant_id"
           ],
           "onDelete": "restrict",
           "onUpdate": "restrict"
@@ -435,6 +495,21 @@
           ],
           "columnsTo": [
             "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "restrict"
+        },
+        "account_person_link_person_tenant_fk": {
+          "name": "account_person_link_person_tenant_fk",
+          "tableFrom": "account_person_link",
+          "tableTo": "person",
+          "columnsFrom": [
+            "person_id",
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id"
           ],
           "onDelete": "restrict",
           "onUpdate": "restrict"
@@ -1127,7 +1202,16 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "person_id_tenant_unique": {
+          "name": "person_id_tenant_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "id",
+            "tenant_id"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {
         "person_first_name_not_empty": {
@@ -1342,6 +1426,21 @@
           "onDelete": "restrict",
           "onUpdate": "restrict"
         },
+        "role_assignment_account_tenant_fk": {
+          "name": "role_assignment_account_tenant_fk",
+          "tableFrom": "role_assignment",
+          "tableTo": "account_person_link",
+          "columnsFrom": [
+            "account_id",
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "account_id",
+            "tenant_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "restrict"
+        },
         "role_assignment_role_fk": {
           "name": "role_assignment_role_fk",
           "tableFrom": "role_assignment",
@@ -1365,6 +1464,36 @@
           ],
           "columnsTo": [
             "id",
+            "tenant_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "restrict"
+        },
+        "role_assignment_granted_by_tenant_fk": {
+          "name": "role_assignment_granted_by_tenant_fk",
+          "tableFrom": "role_assignment",
+          "tableTo": "account_person_link",
+          "columnsFrom": [
+            "granted_by_account_id",
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "account_id",
+            "tenant_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "restrict"
+        },
+        "role_assignment_revoked_by_tenant_fk": {
+          "name": "role_assignment_revoked_by_tenant_fk",
+          "tableFrom": "role_assignment",
+          "tableTo": "account_person_link",
+          "columnsFrom": [
+            "revoked_by_account_id",
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "account_id",
             "tenant_id"
           ],
           "onDelete": "restrict",

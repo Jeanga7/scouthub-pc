@@ -33,6 +33,8 @@ Role assignments are historized and never hard-deleted. A role is active only wh
 
 Organization scopes reuse the Slice 1 materialized path. A scoped actor may access the scope organization and descendants only when the resource path starts with the active assignment scope path. Same tenant alone never grants access.
 
+Authorization decisions must derive permission and scope from the same active RoleAssignment. ScoutHub-PC never combines a permission from one role assignment with a wider scope from another role assignment. A RegionalAdmin is scoped to a REGION, not to the whole NSO tenant; an NSO tenant may contain multiple regions.
+
 `PLATFORM_ADMIN` is deliberately not a business super-admin. It does not receive organization or P2/P3 business data access by default.
 
 Invitations are local first, then external:
@@ -49,6 +51,8 @@ Provisioning is idempotent on the first authenticated request. A valid Clerk ses
 Restricted Clerk sign-up is required operationally, but it is defense in depth. A Clerk user created without a ScoutHub invitation has no local Account or RoleAssignment and receives no business access.
 
 The first RegionalAdmin is created by a manual CLI bootstrap script. No public HTTP bootstrap endpoint exists. The script refuses to run without explicit confirmation and refuses a second active RegionalAdmin bootstrap for the same region.
+
+The Clerk middleware uses explicit `APP_ORIGIN` / `CLERK_AUTHORIZED_PARTIES` configuration for authorized parties. It must not build the allowlist from request headers.
 
 ## Consequences
 

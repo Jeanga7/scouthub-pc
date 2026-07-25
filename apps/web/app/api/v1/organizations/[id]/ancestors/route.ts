@@ -33,7 +33,22 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
       query.tenantId,
       organizationId
     );
-    return jsonResponse(organizations.map(mapOrganization), id);
+    const visible = [];
+    for (const ancestor of organizations) {
+      try {
+        await authorizeOrganization({
+          request,
+          requestId: id,
+          action: "organization.read",
+          organization: ancestor
+        });
+        visible.push(ancestor);
+      } catch {
+        // Ancestors above the actor's scope are useful for hierarchy internally,
+        // but returning them would leak organization data outside the policy scope.
+      }
+    }
+    return jsonResponse(visible.map(mapOrganization), id);
   } catch (error) {
     return handleRouteError(error, id);
   }

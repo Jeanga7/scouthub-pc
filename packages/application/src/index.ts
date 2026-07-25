@@ -42,12 +42,14 @@ export type {
 export { OrganizationUseCases, type IdGenerator } from "./organization/use-cases";
 export type {
   ActorContext,
+  AccountAdministrationView,
   BootstrapRegionalAdminInput,
   CreateRoleAssignmentInput,
   CreatedInvitationDraft,
   IdentityRepository,
   IdentityTransaction,
-  InviteAdultUserRecord
+  InviteAdultUserRecord,
+  ScopedOrganizationResource
 } from "./ports/identity-repository";
 export {
   IdentityUseCases,

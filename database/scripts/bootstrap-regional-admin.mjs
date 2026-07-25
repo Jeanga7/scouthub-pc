@@ -9,7 +9,8 @@ const required = [
   "BOOTSTRAP_LAST_NAME",
   "TENANT_ID",
   "REGION_ORG_ID",
-  "DATABASE_URL"
+  "DATABASE_URL",
+  "CLERK_SECRET_KEY"
 ];
 
 export function validateBootstrapEnv(env) {
@@ -22,8 +23,48 @@ export function validateBootstrapEnv(env) {
   }
 }
 
+export async function fetchBootstrapClerkUser(env, fetchImpl = globalThis.fetch) {
+  validateBootstrapEnv(env);
+  if (typeof fetchImpl !== "function") {
+    throw new Error("A fetch implementation is required to verify the Clerk user.");
+  }
+  const response = await fetchImpl(
+    `https://api.clerk.com/v1/users/${encodeURIComponent(env.CLERK_USER_ID)}`,
+    {
+      headers: {
+        authorization: `Bearer ${env.CLERK_SECRET_KEY}`,
+        accept: "application/json"
+      }
+    }
+  );
+  if (!response.ok) {
+    throw new Error("CLERK_USER_ID was not found in Clerk.");
+  }
+  const user = await response.json();
+  const primaryEmailId = user.primary_email_address_id;
+  const primary = Array.isArray(user.email_addresses)
+    ? user.email_addresses.find((email) => email.id === primaryEmailId)
+    : undefined;
+  if (primary === undefined || typeof primary.email_address !== "string") {
+    throw new Error("Clerk user has no primary email.");
+  }
+  if (primary.verification?.status !== "verified") {
+    throw new Error("Clerk primary email must be verified.");
+  }
+  const expectedEmail = env.BOOTSTRAP_EMAIL.trim().toLowerCase();
+  const actualEmail = primary.email_address.trim().toLowerCase();
+  if (actualEmail !== expectedEmail) {
+    throw new Error("BOOTSTRAP_EMAIL does not match Clerk primary email.");
+  }
+  return {
+    subjectId: user.id,
+    primaryEmail: actualEmail
+  };
+}
+
 async function main() {
   validateBootstrapEnv(process.env);
+  const clerkUser = await fetchBootstrapClerkUser(process.env);
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
   const client = await pool.connect();
   try {
@@ -79,7 +120,7 @@ async function main() {
     await client.query(
       `INSERT INTO account (id, external_identity_id, primary_email, status, email_verified_at)
        VALUES ($1, $2, $3, 'ACTIVE', now())`,
-      [accountId, process.env.CLERK_USER_ID, process.env.BOOTSTRAP_EMAIL]
+      [accountId, clerkUser.subjectId, clerkUser.primaryEmail]
     );
     await client.query(
       "INSERT INTO account_person_link (account_id, tenant_id, person_id) VALUES ($1, $2, $3)",

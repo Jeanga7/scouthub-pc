@@ -228,6 +228,7 @@ export const person = pgTable(
       .defaultNow()
   },
   (table) => [
+    unique("person_id_tenant_unique").on(table.id, table.tenantId),
     foreignKey({
       columns: [table.tenantId],
       foreignColumns: [organization.id],
@@ -262,6 +263,11 @@ export const accountPersonLink = pgTable(
       columns: [table.personId],
       foreignColumns: [person.id],
       name: "account_person_link_person_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    foreignKey({
+      columns: [table.personId, table.tenantId],
+      foreignColumns: [person.id, person.tenantId],
+      name: "account_person_link_person_tenant_fk"
     }).onDelete("restrict").onUpdate("restrict"),
     foreignKey({
       columns: [table.tenantId],
@@ -361,6 +367,11 @@ export const roleAssignment = pgTable(
       name: "role_assignment_account_fk"
     }).onDelete("restrict").onUpdate("restrict"),
     foreignKey({
+      columns: [table.accountId, table.tenantId],
+      foreignColumns: [accountPersonLink.accountId, accountPersonLink.tenantId],
+      name: "role_assignment_account_tenant_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    foreignKey({
       columns: [table.roleId],
       foreignColumns: [roleDefinition.id],
       name: "role_assignment_role_fk"
@@ -369,6 +380,16 @@ export const roleAssignment = pgTable(
       columns: [table.scopeOrgId, table.tenantId],
       foreignColumns: [organization.id, organization.tenantId],
       name: "role_assignment_scope_org_same_tenant_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    foreignKey({
+      columns: [table.grantedByAccountId, table.tenantId],
+      foreignColumns: [accountPersonLink.accountId, accountPersonLink.tenantId],
+      name: "role_assignment_granted_by_tenant_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    foreignKey({
+      columns: [table.revokedByAccountId, table.tenantId],
+      foreignColumns: [accountPersonLink.accountId, accountPersonLink.tenantId],
+      name: "role_assignment_revoked_by_tenant_fk"
     }).onDelete("restrict").onUpdate("restrict"),
     index("role_assignment_account_idx").on(table.accountId),
     index("role_assignment_tenant_scope_idx").on(table.tenantId, table.scopeOrgId),
@@ -429,9 +450,19 @@ export const accountInvitation = pgTable(
       name: "account_invitation_account_fk"
     }).onDelete("restrict").onUpdate("restrict"),
     foreignKey({
+      columns: [table.accountId, table.tenantId],
+      foreignColumns: [accountPersonLink.accountId, accountPersonLink.tenantId],
+      name: "account_invitation_account_tenant_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    foreignKey({
       columns: [table.personId],
       foreignColumns: [person.id],
       name: "account_invitation_person_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    foreignKey({
+      columns: [table.personId, table.tenantId],
+      foreignColumns: [person.id, person.tenantId],
+      name: "account_invitation_person_tenant_fk"
     }).onDelete("restrict").onUpdate("restrict"),
     foreignKey({
       columns: [table.intendedRoleId],
@@ -447,6 +478,16 @@ export const accountInvitation = pgTable(
       columns: [table.invitedByAccountId],
       foreignColumns: [account.id],
       name: "account_invitation_invited_by_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    foreignKey({
+      columns: [table.invitedByAccountId, table.tenantId],
+      foreignColumns: [accountPersonLink.accountId, accountPersonLink.tenantId],
+      name: "account_invitation_invited_by_tenant_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    foreignKey({
+      columns: [table.adultEligibilityAttestedBy, table.tenantId],
+      foreignColumns: [accountPersonLink.accountId, accountPersonLink.tenantId],
+      name: "account_invitation_adult_attested_by_tenant_fk"
     }).onDelete("restrict").onUpdate("restrict"),
     uniqueIndex("account_invitation_external_unique")
       .on(table.externalInvitationId)

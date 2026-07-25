@@ -1,6 +1,13 @@
 import { clerkMiddleware } from "@clerk/nextjs/server";
+import { authorizedPartiesFromEnv } from "./src/identity/clerk-middleware-config";
 
-export default clerkMiddleware();
+const authorizedParties = authorizedPartiesFromEnv(process.env);
+
+export default clerkMiddleware({
+  // The allowlist is explicit configuration, never derived from request Host.
+  authorizedParties
+});
+
 
 export const config = {
   matcher: [

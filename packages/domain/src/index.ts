@@ -45,6 +45,12 @@ export type {
   PermissionCode,
   RoleAssignment,
   RoleCode,
-  RoleScopeType
+  RoleScopeType,
+  Slice2RoleScopeRule
 } from "./authorization/role";
-export { isRoleAssignmentActive } from "./authorization/role";
+export {
+  deriveSlice2ScopeType,
+  getSlice2RoleScopeRule,
+  isRoleAssignmentActive,
+  isSlice2GrantableRole
+} from "./authorization/role";

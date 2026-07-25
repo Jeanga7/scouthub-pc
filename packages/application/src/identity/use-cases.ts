@@ -4,11 +4,15 @@ import {
   isRoleAssignmentActive,
   type Account,
   type AccountInvitation,
-  type PermissionCode,
   type RoleAssignment,
   type RoleCode,
   type RoleScopeType
 } from "@scouthub/domain";
+import {
+  canAccessScopedAction,
+  validateSlice2RoleScope,
+  type OrganizationResource
+} from "@scouthub/authz";
 import { ConflictError, NotFoundError, ValidationError } from "../organization/errors";
 import {
   createAuditEvent,
@@ -18,7 +22,10 @@ import type { IdGenerator } from "../organization/use-cases";
 import type { IdentityProvider, IdentitySession } from "../ports/identity-provider";
 import type {
   ActorContext,
-  IdentityRepository
+  AccountAdministrationView,
+  IdentityRepository,
+  IdentityTransaction,
+  ScopedOrganizationResource
 } from "../ports/identity-repository";
 
 export interface Clock {
@@ -49,7 +56,6 @@ export interface CreateRoleAssignmentUseCaseInput extends RequestContext {
   readonly tenantId: string;
   readonly accountId: string;
   readonly roleCode: RoleCode;
-  readonly scopeType: RoleScopeType;
   readonly scopeOrgId: string | null;
   readonly startsAt: Date;
   readonly endsAt: Date | null;
@@ -68,6 +74,9 @@ export class IdentityUseCases {
     const session = await this.identityProvider.getSession(request);
     if (session === null || session.expiresAt <= this.clock.now()) {
       return null;
+    }
+    if (session.impersonated === true) {
+      throw new ValidationError("Impersonated provider sessions are not allowed.", "AUTH_IMPERSONATION_FORBIDDEN", 403);
     }
     return session;
   }
@@ -103,7 +112,8 @@ export class IdentityUseCases {
               resourceId: existing.account.id,
               action: "identity.login_denied_suspended",
               metadata: { account_status: existing.account.status },
-              requestId: input.requestId
+              requestId: input.requestId,
+              auditActor: { kind: "USER", id: existing.account.id }
             })
           )
         );
@@ -135,12 +145,20 @@ export class IdentityUseCases {
       if (alreadyLinked !== null) {
         throw new ConflictError("Identity subject is already linked to an account.");
       }
+      const invitationScope = await transaction.findOrganizationResource(
+        invitation.tenantId,
+        invitation.intendedScopeOrgId
+      );
+      if (invitationScope === null) {
+        throw new ValidationError("Invitation scope is no longer available.", "INVITATION_SCOPE_MISSING", 403);
+      }
 
       const actor = await transaction.acceptInvitation({
         invitationId: invitation.id,
         subjectId: profile.subjectId,
         emailVerifiedAt: this.clock.now(),
-        roleAssignmentId: this.ids.generate()
+        roleAssignmentId: this.ids.generate(),
+        scopeType: assertRoleScope(invitation.intendedRoleCode, invitationScope)
       });
       await transaction.appendAuditEvent(
         createIdentityAuditEvent({
@@ -150,7 +168,8 @@ export class IdentityUseCases {
           resourceId: invitation.accountId,
           action: "identity.account_provisioned",
           metadata: { invitation_id: invitation.id },
-          requestId: input.requestId
+          requestId: input.requestId,
+          auditActor: { kind: "USER", id: invitation.accountId }
         })
       );
       await transaction.appendAuditEvent(
@@ -161,7 +180,8 @@ export class IdentityUseCases {
           resourceId: invitation.id,
           action: "identity.invitation_accepted",
           metadata: {},
-          requestId: input.requestId
+          requestId: input.requestId,
+          auditActor: { kind: "USER", id: invitation.accountId }
         })
       );
       return { ...actor, assuranceLevel: input.session.assuranceLevel };
@@ -169,20 +189,18 @@ export class IdentityUseCases {
   }
 
   async inviteAdultUser(input: InviteAdultUserInput): Promise<AccountInvitation> {
-    assertPermission(input.actor, input.tenantId, "invitation.create", this.clock.now());
     if (!input.adultEligibilityConfirmed) {
       throw new ValidationError("Adult eligibility must be explicitly confirmed.", "ADULT_ELIGIBILITY_REQUIRED");
-    }
-    if (input.roleCode === "PLATFORM_ADMIN" || input.roleCode === "NATIONAL_OBSERVER") {
-      throw new ValidationError("Requested role cannot be granted by this flow.", "ROLE_GRANT_FORBIDDEN");
     }
 
     const scope = await this.repository.transaction((transaction) =>
       transaction.findOrganizationResource(input.tenantId, input.scopeOrganizationId)
     );
-    if (scope === null || !canActorReachPath(input.actor, input.tenantId, scope.path, this.clock.now())) {
-      throw new ValidationError("Invitation scope is outside actor permissions.", "SCOPE_FORBIDDEN", 403);
+    if (scope === null) {
+      throw new NotFoundError("Invitation scope not found.");
     }
+    assertRoleScope(input.roleCode, scope);
+    assertScopedPolicy(input.actor, "invitation.create", scope, this.clock.now());
 
     const draft = await this.repository.transaction(async (transaction) => {
       const created = await transaction.createInvitationDraft({
@@ -209,7 +227,8 @@ export class IdentityUseCases {
           resourceId: created.invitation.id,
           action: "identity.invitation_requested",
           metadata: { role: input.roleCode, scope_org_id: input.scopeOrganizationId },
-          requestId: input.requestId
+          requestId: input.requestId,
+          auditActor: userAuditActor(input.actor)
         })
       );
       return created;
@@ -223,22 +242,28 @@ export class IdentityUseCases {
         expiresInDays: 30
       });
       return await this.repository.transaction(async (transaction) => {
-        const invitation = await transaction.markInvitationPending(
-          draft.invitation.id,
-          external.externalInvitationId
-        );
-        await transaction.appendAuditEvent(
-          createIdentityAuditEvent({
-            id: this.ids.generate(),
-            tenantId: input.tenantId,
-            resourceType: "invitation",
-            resourceId: invitation.id,
-            action: "identity.invitation_sent",
-            metadata: {},
-            requestId: input.requestId
-          })
-        );
-        return invitation;
+        try {
+          const invitation = await transaction.markInvitationPending(
+            draft.invitation.id,
+            external.externalInvitationId
+          );
+          await transaction.appendAuditEvent(
+            createIdentityAuditEvent({
+              id: this.ids.generate(),
+              tenantId: input.tenantId,
+              resourceType: "invitation",
+              resourceId: invitation.id,
+              action: "identity.invitation_sent",
+              metadata: {},
+              requestId: input.requestId,
+              auditActor: userAuditActor(input.actor)
+            })
+          );
+          return invitation;
+        } catch (error) {
+          await this.identityProvider.revokeInvitation(external.externalInvitationId);
+          throw error;
+        }
       });
     } catch (error) {
       await this.repository.transaction(async (transaction) => {
@@ -251,7 +276,8 @@ export class IdentityUseCases {
             resourceId: draft.invitation.id,
             action: "identity.invitation_failed",
             metadata: {},
-            requestId: input.requestId
+            requestId: input.requestId,
+            auditActor: userAuditActor(input.actor)
           })
         );
       });
@@ -260,8 +286,13 @@ export class IdentityUseCases {
   }
 
   async listInvitations(actor: ActorContext, tenantId: string): Promise<AccountInvitation[]> {
-    assertPermission(actor, tenantId, "invitation.read", this.clock.now());
-    return this.repository.transaction((transaction) => transaction.listInvitations(tenantId));
+    const scopes = readableScopePaths(actor, tenantId, "invitation.read", this.clock.now());
+    if (scopes.length === 0) {
+      return [];
+    }
+    return this.repository.transaction((transaction) =>
+      transaction.listInvitationsForScopes(tenantId, scopes)
+    );
   }
 
   async revokeInvitation(input: {
@@ -270,15 +301,23 @@ export class IdentityUseCases {
     readonly invitationId: string;
     readonly requestId?: string;
   }): Promise<AccountInvitation> {
-    assertPermission(input.actor, input.tenantId, "invitation.revoke", this.clock.now());
     const invitation = await this.repository.transaction(async (transaction) => {
+      const target = await transaction.findInvitationForUpdate(input.invitationId);
+      if (target === null || target.tenantId !== input.tenantId) {
+        throw new NotFoundError("Invitation not found.");
+      }
+      const scope = await transaction.findOrganizationResource(input.tenantId, target.intendedScopeOrgId);
+      if (scope === null) {
+        throw new NotFoundError("Invitation scope not found.");
+      }
+      assertScopedPolicy(input.actor, "invitation.revoke", scope, this.clock.now());
       const revoked = await transaction.revokeInvitation({
         tenantId: input.tenantId,
         invitationId: input.invitationId,
         revokedByAccountId: input.actor.account.id
       });
       if (revoked === null) {
-        throw new NotFoundError("Invitation not found.");
+        throw new ConflictError("Invitation cannot be revoked from its current status.");
       }
       await transaction.appendAuditEvent(
         createIdentityAuditEvent({
@@ -288,7 +327,8 @@ export class IdentityUseCases {
           resourceId: revoked.id,
           action: "identity.invitation_revoked",
           metadata: {},
-          requestId: input.requestId
+          requestId: input.requestId,
+          auditActor: userAuditActor(input.actor)
         })
       );
       return revoked;
@@ -301,8 +341,23 @@ export class IdentityUseCases {
   }
 
   async listRoleAssignments(actor: ActorContext, tenantId: string): Promise<RoleAssignment[]> {
-    assertPermission(actor, tenantId, "role.read", this.clock.now());
-    return this.repository.transaction((transaction) => transaction.listRoleAssignments(tenantId));
+    const scopes = readableScopePaths(actor, tenantId, "role.read", this.clock.now());
+    if (scopes.length === 0) {
+      return [];
+    }
+    return this.repository.transaction((transaction) =>
+      transaction.listRoleAssignmentsForScopes(tenantId, scopes)
+    );
+  }
+
+  async listAccounts(actor: ActorContext, tenantId: string): Promise<AccountAdministrationView[]> {
+    const scopes = readableScopePaths(actor, tenantId, "account.read", this.clock.now());
+    if (scopes.length === 0) {
+      return [];
+    }
+    return this.repository.transaction((transaction) =>
+      transaction.listAccountsForScopes(tenantId, scopes)
+    );
   }
 
   async revokeRoleAssignment(input: {
@@ -312,8 +367,13 @@ export class IdentityUseCases {
     readonly reason: string | null;
     readonly requestId?: string;
   }): Promise<RoleAssignment> {
-    assertPermission(input.actor, input.tenantId, "role.revoke", this.clock.now());
     const assignment = await this.repository.transaction(async (transaction) => {
+      const target = await transaction.findRoleAssignmentForUpdate(input.tenantId, input.roleAssignmentId);
+      if (target === null) {
+        throw new NotFoundError("Role assignment not found.");
+      }
+      const scope = await scopeForAssignment(transaction, target);
+      assertScopedPolicy(input.actor, "role.revoke", scope, this.clock.now());
       const revoked = await transaction.revokeRoleAssignment({
         tenantId: input.tenantId,
         roleAssignmentId: input.roleAssignmentId,
@@ -331,7 +391,8 @@ export class IdentityUseCases {
           resourceId: revoked.id,
           action: "identity.role_revoked",
           metadata: { reason: input.reason },
-          requestId: input.requestId
+          requestId: input.requestId,
+          auditActor: userAuditActor(input.actor)
         })
       );
       return revoked;
@@ -342,23 +403,22 @@ export class IdentityUseCases {
   async createRoleAssignment(
     input: CreateRoleAssignmentUseCaseInput
   ): Promise<RoleAssignment> {
-    assertPermission(input.actor, input.tenantId, "role.assign", this.clock.now());
-    if (input.roleCode === "PLATFORM_ADMIN" || input.scopeType === "NATIONAL") {
-      throw new ValidationError("Role assignment is outside Slice 2 grant policy.", "ROLE_GRANT_FORBIDDEN");
-    }
     return this.repository.transaction(async (transaction) => {
-      if (input.scopeOrgId !== null) {
-        const scope = await transaction.findOrganizationResource(input.tenantId, input.scopeOrgId);
-        if (scope === null || !canActorReachPath(input.actor, input.tenantId, scope.path, this.clock.now())) {
-          throw new ValidationError("Role scope is outside actor permissions.", "SCOPE_FORBIDDEN", 403);
-        }
+      if (input.scopeOrgId === null) {
+        throw new ValidationError("Organization scope is required.", "SCOPE_REQUIRED");
       }
+      const scope = await transaction.findOrganizationResource(input.tenantId, input.scopeOrgId);
+      if (scope === null) {
+        throw new NotFoundError("Role scope not found.");
+      }
+      const scopeType = assertRoleScope(input.roleCode, scope);
+      assertScopedPolicy(input.actor, "role.assign", scope, this.clock.now());
       const assignment = await transaction.createRoleAssignment({
         id: this.ids.generate(),
         tenantId: input.tenantId,
         accountId: input.accountId,
         roleCode: input.roleCode,
-        scopeType: input.scopeType,
+        scopeType,
         scopeOrgId: input.scopeOrgId,
         startsAt: input.startsAt,
         endsAt: input.endsAt,
@@ -372,7 +432,8 @@ export class IdentityUseCases {
           resourceId: assignment.id,
           action: "identity.role_assigned",
           metadata: { role: assignment.roleCode, scope_org_id: assignment.scopeOrgId },
-          requestId: input.requestId
+          requestId: input.requestId,
+          auditActor: userAuditActor(input.actor)
         })
       );
       return assignment;
@@ -385,8 +446,21 @@ export class IdentityUseCases {
     readonly accountId: string;
     readonly requestId?: string;
   }): Promise<Account> {
-    assertPermission(input.actor, input.tenantId, "account.suspend", this.clock.now());
     const account = await this.repository.transaction(async (transaction) => {
+      const targetView = await transaction.findAccountAdministrationViewForUpdate(input.accountId);
+      if (targetView === null) {
+        throw new NotFoundError("Account not found.");
+      }
+      const activeAssignments = targetView.assignments.filter((assignment) =>
+        isRoleAssignmentActive(assignment, this.clock.now())
+      );
+      if (activeAssignments.length === 0) {
+        throw new ValidationError("Account has no administrable active access.", "ACCOUNT_SCOPE_FORBIDDEN", 403);
+      }
+      for (const assignment of activeAssignments) {
+        const scope = await scopeForAssignment(transaction, assignment);
+        assertScopedPolicy(input.actor, "account.suspend", scope, this.clock.now());
+      }
       const target = await transaction.suspendAccount({
         tenantId: input.tenantId,
         accountId: input.accountId
@@ -402,7 +476,8 @@ export class IdentityUseCases {
           resourceId: target.id,
           action: "identity.account_suspended",
           metadata: {},
-          requestId: input.requestId
+          requestId: input.requestId,
+          auditActor: userAuditActor(input.actor)
         })
       );
       return target;
@@ -464,37 +539,80 @@ export class IdentityUseCases {
   }
 }
 
-function assertPermission(
+function assertRoleScope(roleCode: RoleCode, scope: ScopedOrganizationResource): RoleScopeType {
+  const result = validateSlice2RoleScope({
+    roleCode,
+    organizationType: scope.type
+  });
+  if (!("ok" in result)) {
+    throw new ValidationError("Role cannot be granted on this scope in Slice 2.", result.reasonCode, 403);
+  }
+  return result.scopeType;
+}
+
+function assertScopedPolicy(
   actor: ActorContext,
-  tenantId: string,
-  permission: PermissionCode,
+  action: RoleAssignment["permissions"][number],
+  scope: ScopedOrganizationResource,
   now: Date
 ): void {
-  const allowed = actor.assignments.some(
-    (assignment) =>
-      assignment.tenantId === tenantId &&
-      assignment.roleCode !== "PLATFORM_ADMIN" &&
-      isRoleAssignmentActive(assignment, now) &&
-      assignment.permissions.includes(permission)
-  );
-  if (!allowed) {
-    throw new ValidationError("Permission denied.", "AUTHZ_DENIED", 403);
+  const decision = canAccessScopedAction(actor, action, toOrganizationResource(scope), { now });
+  if (decision.effect === "deny") {
+    throw new ValidationError("Permission denied.", decision.reasonCode, 403);
   }
 }
 
-function canActorReachPath(
+function readableScopePaths(
   actor: ActorContext,
   tenantId: string,
-  path: string,
+  action: RoleAssignment["permissions"][number],
   now: Date
-): boolean {
-  return actor.assignments.some(
-    (assignment) =>
+): string[] {
+  const paths = new Set<string>();
+  for (const assignment of actor.assignments) {
+    // List endpoints must derive both permission and visible perimeter from the
+    // same active assignment; combining a broad read-only scope with another
+    // administrative permission would be a privilege escalation.
+    if (
       assignment.tenantId === tenantId &&
+      assignment.roleCode !== "PLATFORM_ADMIN" &&
       isRoleAssignmentActive(assignment, now) &&
-      assignment.scopePath !== null &&
-      path.startsWith(assignment.scopePath)
-  );
+      assignment.permissions.includes(action) &&
+      assignment.scopePath !== null
+    ) {
+      paths.add(assignment.scopePath);
+    }
+  }
+  return [...paths];
+}
+
+async function scopeForAssignment(
+  transaction: IdentityTransaction,
+  assignment: RoleAssignment
+): Promise<ScopedOrganizationResource> {
+  if (
+    assignment.scopeOrgId === null ||
+    assignment.scopePath === null ||
+    assignment.scopeType === "GLOBAL_TECH" ||
+    assignment.scopeType === "NATIONAL" ||
+    assignment.scopeType === "OWN"
+  ) {
+    throw new ValidationError("Role assignment scope is not administrable in Slice 2.", "SCOPE_NOT_ADMINISTRABLE", 403);
+  }
+  const scope = await transaction.findOrganizationResource(assignment.tenantId, assignment.scopeOrgId);
+  if (scope === null) {
+    throw new NotFoundError("Role assignment scope not found.");
+  }
+  return scope;
+}
+
+function toOrganizationResource(scope: ScopedOrganizationResource): OrganizationResource {
+  return {
+    tenantId: scope.tenantId,
+    organizationId: scope.organizationId,
+    path: scope.path,
+    type: scope.type
+  };
 }
 
 function addDays(value: Date, days: number): Date {
@@ -521,8 +639,13 @@ function createIdentityAuditEvent(input: {
     | "identity.login_denied_suspended";
   readonly metadata: Record<string, unknown>;
   readonly requestId?: string;
+  readonly auditActor?: { readonly kind: "SYSTEM" | "USER" | "SERVICE"; readonly id: string | null };
 }) {
   return createAuditEvent(input);
 }
 
 export { displayNameFor };
+
+function userAuditActor(actor: ActorContext): { readonly kind: "USER"; readonly id: string } {
+  return { kind: "USER", id: actor.account.id };
+}

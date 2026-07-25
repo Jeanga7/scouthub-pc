@@ -1,9 +1,12 @@
-import type {
-  AccountInvitation,
-  RoleAssignment
+import {
+  isRoleAssignmentActive,
+  type AccountInvitation,
+  type RoleAssignment
 } from "@scouthub/domain";
 import type { ActorContext } from "@scouthub/application";
+import type { AccountAdministrationView } from "@scouthub/application";
 import {
+  accountAdministrationResponseSchema,
   invitationResponseSchema,
   meResponseSchema,
   roleAssignmentResponseSchema
@@ -28,6 +31,9 @@ export function identityJson(data: unknown, request_id: string, init?: ResponseI
 }
 
 export function mapMe(actor: ActorContext) {
+  const activeAssignments = actor.assignments.filter((assignment) =>
+    isRoleAssignmentActive(assignment, new Date())
+  );
   return meResponseSchema.parse({
     account: {
       id: actor.account.id,
@@ -43,8 +49,8 @@ export function mapMe(actor: ActorContext) {
             displayName: actor.person.displayName,
             classification: actor.person.classification
           },
-    roleAssignments: actor.assignments.map(mapRoleAssignment),
-    scopes: actor.assignments.map((assignment) => ({
+    roleAssignments: activeAssignments.map(mapRoleAssignment),
+    scopes: activeAssignments.map((assignment) => ({
       tenantId: assignment.tenantId,
       scopeOrgId: assignment.scopeOrgId,
       scopeType: assignment.scopeType
@@ -82,3 +88,25 @@ export function mapRoleAssignment(assignment: RoleAssignment) {
   });
 }
 
+export function mapAccountAdministration(view: AccountAdministrationView) {
+  const activeAssignments = view.assignments.filter((assignment) =>
+    isRoleAssignmentActive(assignment, new Date())
+  );
+  return accountAdministrationResponseSchema.parse({
+    account: {
+      id: view.account.id,
+      primaryEmail: view.account.primaryEmail,
+      status: view.account.status
+    },
+    person:
+      view.person === null
+        ? null
+        : {
+            id: view.person.id,
+            tenantId: view.person.tenantId,
+            displayName: view.person.displayName,
+            classification: view.person.classification
+          },
+    activeRoleAssignments: activeAssignments.map(mapRoleAssignment)
+  });
+}

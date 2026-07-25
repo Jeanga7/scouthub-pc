@@ -6,6 +6,7 @@ export interface IdentitySession {
   readonly expiresAt: Date;
   readonly firstFactorAgeMinutes?: number;
   readonly secondFactorAgeMinutes?: number;
+  readonly impersonated?: boolean;
 }
 
 export interface IdentityProfile {

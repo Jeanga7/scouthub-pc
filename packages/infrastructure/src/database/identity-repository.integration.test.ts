@@ -18,7 +18,8 @@ const ids = {
   tenant: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
   region: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
   groupA: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3",
-  groupB: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4",
+  regionB: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4",
+  groupB: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa04",
   adminAccount: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5",
   adminPerson: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa6",
   adminAssignment: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa7",
@@ -125,6 +126,7 @@ describe("PgIdentityRepository", () => {
     expect(actor.account.id).toBe(again.account.id);
     expect(actor.assignments).toHaveLength(1);
     expect(actor.assignments[0]?.roleCode).toBe("GROUP_ADMIN");
+    expect(actor.assignments[0]?.scopeType).toBe("GROUP");
   });
 
   it("marks invitation failed when Clerk invitation creation fails", async () => {
@@ -206,12 +208,81 @@ describe("PgIdentityRepository", () => {
       })
     ).rejects.toThrow("last active Regional Admin");
   });
+
+  it("does not treat a RegionalAdmin region scope as tenant-wide", async () => {
+    await createOrganizations();
+    const fakeIdentity = new FakeIdentityProvider();
+    const useCases = createIdentityUseCases(fakeIdentity, [
+      ids.adminAccount,
+      ids.adminPerson,
+      ids.adminAssignment,
+      auditId(1)
+    ]);
+    const adminA = await useCases.bootstrapRegionalAdmin({
+      tenantId: ids.tenant,
+      regionOrganizationId: ids.region,
+      subjectId: "user_admin_a",
+      email: "admin-a@example.test",
+      firstName: "Awa",
+      lastName: "Ndiaye"
+    });
+    const adminB = await useCases.bootstrapRegionalAdmin({
+      tenantId: ids.tenant,
+      regionOrganizationId: ids.regionB,
+      subjectId: "user_admin_b",
+      email: "admin-b@example.test",
+      firstName: "Binta",
+      lastName: "Sarr"
+    });
+
+    const regionBInvitation = await useCases.inviteAdultUser({
+      actor: adminB,
+      tenantId: ids.tenant,
+      email: "region-b@example.test",
+      firstName: "Region",
+      lastName: "B",
+      roleCode: "GROUP_ADMIN",
+      scopeOrganizationId: ids.groupB,
+      adultEligibilityConfirmed: true
+    });
+
+    await expect(
+      useCases.revokeInvitation({
+        actor: adminA,
+        tenantId: ids.tenant,
+        invitationId: regionBInvitation.id
+      })
+    ).rejects.toThrow("Permission denied");
+    await expect(
+      useCases.createRoleAssignment({
+        actor: adminA,
+        tenantId: ids.tenant,
+        accountId: adminB.account.id,
+        roleCode: "GROUP_ADMIN",
+        scopeOrgId: ids.groupB,
+        startsAt: clock.now(),
+        endsAt: null
+      })
+    ).rejects.toThrow("Permission denied");
+    await expect(
+      useCases.suspendAccount({
+        actor: adminA,
+        tenantId: ids.tenant,
+        accountId: adminB.account.id
+      })
+    ).rejects.toThrow("Permission denied");
+
+    const visibleInvitations = await useCases.listInvitations(adminA, ids.tenant);
+    const visibleAssignments = await useCases.listRoleAssignments(adminA, ids.tenant);
+    expect(visibleInvitations.map((invitation) => invitation.id)).not.toContain(regionBInvitation.id);
+    expect(visibleAssignments.map((assignment) => assignment.accountId)).not.toContain(adminB.account.id);
+  });
 });
 
 async function createOrganizations(): Promise<void> {
   const orgUseCases = new OrganizationUseCases(
     createPgOrganizationRepository(databaseUrl),
-    organizationIds([ids.tenant, ids.region, ids.groupA, ids.groupB])
+    organizationIds([ids.tenant, ids.region, ids.groupA, ids.regionB, ids.groupB])
   );
   await orgUseCases.createTenantRoot({ name: "Tenant Alpha", code: "TENANT" });
   await orgUseCases.createOrganization({
@@ -230,7 +301,14 @@ async function createOrganizations(): Promise<void> {
   });
   await orgUseCases.createOrganization({
     tenantId: ids.tenant,
-    parentId: ids.region,
+    parentId: ids.tenant,
+    type: "REGION",
+    name: "Region Beta",
+    code: "REGION-B"
+  });
+  await orgUseCases.createOrganization({
+    tenantId: ids.tenant,
+    parentId: ids.regionB,
     type: "GROUP",
     name: "Group B",
     code: "GROUP-B"

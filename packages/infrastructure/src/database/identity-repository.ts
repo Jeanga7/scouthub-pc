@@ -13,12 +13,14 @@ import type {
 } from "@scouthub/domain";
 import type {
   ActorContext,
+  AccountAdministrationView,
   BootstrapRegionalAdminInput,
   CreateRoleAssignmentInput,
   CreatedInvitationDraft,
   IdentityRepository,
   IdentityTransaction,
-  InviteAdultUserRecord
+  InviteAdultUserRecord,
+  ScopedOrganizationResource
 } from "@scouthub/application";
 import type { AuditEventInput } from "@scouthub/application";
 import { ConflictError, NotFoundError } from "@scouthub/application";
@@ -61,7 +63,7 @@ type InvitationRow = QueryResultRow & {
   person_id: string;
   email: string;
   intended_role_id: string;
-  intended_role_code: string;
+  intended_role_code: RoleCode;
   intended_scope_org_id: string;
   status: AccountInvitation["status"];
   external_invitation_id: string | null;
@@ -121,10 +123,16 @@ class PgIdentityTransaction implements IdentityTransaction {
   constructor(private readonly db: Queryable) {}
 
   async findActorBySubject(subjectId: string): Promise<ActorContext | null> {
+    const account = await this.findAccountBySubject(subjectId);
+    return account === null ? null : this.buildActor(account);
+  }
+
+  async findActorBySubjectForUpdate(subjectId: string): Promise<ActorContext | null> {
     const account = await this.findAccountBySubjectForUpdate(subjectId);
-    if (account === null) {
-      return null;
-    }
+    return account === null ? null : this.buildActor(account);
+  }
+
+  private async buildActor(account: Account): Promise<ActorContext> {
     const person = await this.findPersonForAccount(account.id);
     return {
       account,
@@ -132,6 +140,14 @@ class PgIdentityTransaction implements IdentityTransaction {
       assignments: await this.findAssignmentsForAccount(account.id),
       assuranceLevel: "standard"
     };
+  }
+
+  private async findAccountBySubject(subjectId: string): Promise<Account | null> {
+    const rows = await this.db.query<AccountRow>(
+      "SELECT * FROM account WHERE external_identity_id = $1 LIMIT 1",
+      [subjectId]
+    );
+    return rows.rows[0] === undefined ? null : mapAccount(rows.rows[0]);
   }
 
   async findAccountById(accountId: string): Promise<Account | null> {
@@ -213,12 +229,15 @@ class PgIdentityTransaction implements IdentityTransaction {
     invitationId: string,
     externalInvitationId: string
   ): Promise<AccountInvitation> {
-    await this.db.query(
+    const result = await this.db.query(
       `UPDATE account_invitation
        SET status = 'PENDING', external_invitation_id = $2, updated_at = now()
-       WHERE id = $1`,
+       WHERE id = $1 AND status = 'CREATING'`,
       [invitationId, externalInvitationId]
     );
+    if (result.rowCount !== 1) {
+      throw new ConflictError("Invitation cannot transition to pending.");
+    }
     const invitation = await this.findInvitationForUpdate(invitationId);
     if (invitation === null) {
       throw new Error("Expected invitation.");
@@ -233,11 +252,16 @@ class PgIdentityTransaction implements IdentityTransaction {
     );
   }
 
+  simulateNextPendingFailure(): void {
+    throw new Error("Pending transition failure simulation is only available in test repositories.");
+  }
+
   async acceptInvitation(input: {
     readonly invitationId: string;
     readonly subjectId: string;
     readonly emailVerifiedAt: Date;
     readonly roleAssignmentId: string;
+    readonly scopeType: RoleScopeType;
   }): Promise<ActorContext> {
     const invitation = await this.findInvitationForUpdate(input.invitationId);
     if (invitation === null) {
@@ -255,12 +279,13 @@ class PgIdentityTransaction implements IdentityTransaction {
         id, tenant_id, account_id, role_id, scope_type, scope_org_id,
         starts_at, granted_by_account_id
       )
-       VALUES ($1, $2, $3, $4, 'REGION', $5, now(), $6)`,
+       VALUES ($1, $2, $3, $4, $5, $6, now(), $7)`,
       [
         input.roleAssignmentId,
         invitation.tenantId,
         invitation.accountId,
         invitation.intendedRoleId,
+        input.scopeType,
         invitation.intendedScopeOrgId,
         invitation.invitedByAccountId
       ]
@@ -290,17 +315,40 @@ class PgIdentityTransaction implements IdentityTransaction {
     return rows.rows.map(mapInvitation);
   }
 
+  async listInvitationsForScopes(
+    tenantId: string,
+    scopePaths: readonly string[]
+  ): Promise<AccountInvitation[]> {
+    if (scopePaths.length === 0) {
+      return [];
+    }
+    const rows = await this.db.query<InvitationRow>(
+      `SELECT ai.*, rd.code AS intended_role_code
+       FROM account_invitation ai
+       JOIN role_definition rd ON rd.id = ai.intended_role_id
+       JOIN organization org ON org.id = ai.intended_scope_org_id AND org.tenant_id = ai.tenant_id
+       WHERE ai.tenant_id = $1
+         AND org.path LIKE ANY($2::text[])
+       ORDER BY ai.created_at DESC`,
+      [tenantId, scopePathPatterns(scopePaths)]
+    );
+    return rows.rows.map(mapInvitation);
+  }
+
   async revokeInvitation(input: {
     readonly tenantId: string;
     readonly invitationId: string;
     readonly revokedByAccountId: string;
   }): Promise<AccountInvitation | null> {
-    await this.db.query(
+    const result = await this.db.query(
       `UPDATE account_invitation
        SET status = 'REVOKED', revoked_at = now(), updated_at = now()
        WHERE tenant_id = $1 AND id = $2 AND status = 'PENDING'`,
       [input.tenantId, input.invitationId]
     );
+    if (result.rowCount !== 1) {
+      return null;
+    }
     return this.findInvitationForUpdate(input.invitationId);
   }
 
@@ -308,6 +356,20 @@ class PgIdentityTransaction implements IdentityTransaction {
     const rows = await this.db.query<AssignmentRow>(assignmentSql("ra.tenant_id = $1"), [
       tenantId
     ]);
+    return rows.rows.map(mapAssignment);
+  }
+
+  async listRoleAssignmentsForScopes(
+    tenantId: string,
+    scopePaths: readonly string[]
+  ): Promise<RoleAssignment[]> {
+    if (scopePaths.length === 0) {
+      return [];
+    }
+    const rows = await this.db.query<AssignmentRow>(
+      assignmentSql("ra.tenant_id = $1 AND org.path LIKE ANY($2::text[])"),
+      [tenantId, scopePathPatterns(scopePaths)]
+    );
     return rows.rows.map(mapAssignment);
   }
 
@@ -335,12 +397,38 @@ class PgIdentityTransaction implements IdentityTransaction {
     return mapRequiredAssignment(rows.rows[0]);
   }
 
+  async findRoleAssignmentForUpdate(
+    tenantId: string,
+    roleAssignmentId: string
+  ): Promise<RoleAssignment | null> {
+    await this.db.query(
+      "SELECT id FROM role_assignment WHERE tenant_id = $1 AND id = $2 FOR UPDATE",
+      [tenantId, roleAssignmentId]
+    );
+    const rows = await this.db.query<AssignmentRow>(
+      assignmentSql("ra.tenant_id = $1 AND ra.id = $2"),
+      [tenantId, roleAssignmentId]
+    );
+    return rows.rows[0] === undefined ? null : mapAssignment(rows.rows[0]);
+  }
+
   async revokeRoleAssignment(input: {
     readonly tenantId: string;
     readonly roleAssignmentId: string;
     readonly revokedByAccountId: string;
     readonly reason: string | null;
   }): Promise<RoleAssignment | null> {
+    const target = await this.findRoleAssignmentForUpdate(input.tenantId, input.roleAssignmentId);
+    if (
+      target?.roleCode === "REGIONAL_ADMIN" &&
+      target.revokedAt === null &&
+      target.scopeOrgId !== null
+    ) {
+      const admins = await this.countActiveRegionalAdmins(input.tenantId, target.scopeOrgId, new Date());
+      if (admins <= 1) {
+        throw new ConflictError("Cannot revoke the last active Regional Admin for this region.");
+      }
+    }
     await this.db.query(
       `UPDATE role_assignment
        SET revoked_at = now(), revoked_by_account_id = $3, revocation_reason = $4
@@ -357,13 +445,13 @@ class PgIdentityTransaction implements IdentityTransaction {
     readonly tenantId: string;
     readonly accountId: string;
   }): Promise<Account | null> {
-    const regionalAdmins = await this.countActiveRegionalAdminsForAccount(
+    const regionalAdminScopes = await this.activeRegionalAdminScopesForAccount(
       input.tenantId,
       input.accountId
     );
-    if (regionalAdmins > 0) {
-      const allRegionalAdmins = await this.countAllActiveRegionalAdmins(input.tenantId);
-      if (allRegionalAdmins <= 1) {
+    for (const regionOrganizationId of regionalAdminScopes) {
+      const admins = await this.countActiveRegionalAdmins(input.tenantId, regionOrganizationId, new Date());
+      if (admins <= 1) {
         throw new ConflictError("Cannot suspend the last active Regional Admin.");
       }
     }
@@ -371,8 +459,12 @@ class PgIdentityTransaction implements IdentityTransaction {
       `UPDATE account
        SET status = 'SUSPENDED', updated_at = now()
        WHERE id = $1
+         AND EXISTS (
+           SELECT 1 FROM account_person_link apl
+           WHERE apl.account_id = account.id AND apl.tenant_id = $2
+         )
        RETURNING *`,
-      [input.accountId]
+      [input.accountId, input.tenantId]
     );
     return rows.rows[0] === undefined ? null : mapAccount(rows.rows[0]);
   }
@@ -386,8 +478,10 @@ class PgIdentityTransaction implements IdentityTransaction {
       `SELECT count(*)::int AS count
        FROM role_assignment ra
        JOIN role_definition rd ON rd.id = ra.role_id
+       JOIN account a ON a.id = ra.account_id
        WHERE ra.tenant_id = $1
          AND rd.code = 'REGIONAL_ADMIN'
+         AND a.status = 'ACTIVE'
          AND ra.scope_org_id = $2
          AND ra.starts_at <= $3
          AND (ra.ends_at IS NULL OR $3 < ra.ends_at)
@@ -443,15 +537,20 @@ class PgIdentityTransaction implements IdentityTransaction {
   async findOrganizationResource(
     tenantId: string,
     organizationId: string
-  ): Promise<{ tenantId: string; organizationId: string; path: string } | null> {
-    const rows = await this.db.query<{ tenant_id: string; id: string; path: string }>(
-      "SELECT tenant_id, id, path FROM organization WHERE tenant_id = $1 AND id = $2 LIMIT 1",
+  ): Promise<ScopedOrganizationResource | null> {
+    const rows = await this.db.query<{
+      tenant_id: string;
+      id: string;
+      type: ScopedOrganizationResource["type"];
+      path: string;
+    }>(
+      "SELECT tenant_id, id, type, path FROM organization WHERE tenant_id = $1 AND id = $2 LIMIT 1",
       [tenantId, organizationId]
     );
     const row = rows.rows[0];
     return row === undefined
       ? null
-      : { tenantId: row.tenant_id, organizationId: row.id, path: row.path };
+      : { tenantId: row.tenant_id, organizationId: row.id, type: row.type, path: row.path };
   }
 
   async getRolePermissions(roleCode: RoleCode): Promise<readonly PermissionCode[]> {
@@ -489,6 +588,46 @@ class PgIdentityTransaction implements IdentityTransaction {
     );
   }
 
+  async listAccountsForScopes(
+    tenantId: string,
+    scopePaths: readonly string[]
+  ): Promise<AccountAdministrationView[]> {
+    if (scopePaths.length === 0) {
+      return [];
+    }
+    const rows = await this.db.query<{ account_id: string }>(
+      `SELECT DISTINCT ra.account_id
+       FROM role_assignment ra
+       JOIN organization org ON org.id = ra.scope_org_id AND org.tenant_id = ra.tenant_id
+       WHERE ra.tenant_id = $1
+         AND org.path LIKE ANY($2::text[])
+       ORDER BY ra.account_id`,
+      [tenantId, scopePathPatterns(scopePaths)]
+    );
+    const views = await Promise.all(
+      rows.rows.map((row) => this.findAccountAdministrationViewForUpdate(row.account_id))
+    );
+    return views.filter((view): view is AccountAdministrationView => view !== null);
+  }
+
+  async findAccountAdministrationViewForUpdate(
+    accountId: string
+  ): Promise<AccountAdministrationView | null> {
+    const rows = await this.db.query<AccountRow>(
+      "SELECT * FROM account WHERE id = $1 FOR UPDATE",
+      [accountId]
+    );
+    const account = rows.rows[0] === undefined ? null : mapAccount(rows.rows[0]);
+    if (account === null) {
+      return null;
+    }
+    return {
+      account,
+      person: await this.findPersonForAccount(account.id),
+      assignments: await this.findAssignmentsForAccount(account.id)
+    };
+  }
+
   private async findPersonForAccount(accountId: string): Promise<Person | null> {
     const rows = await this.db.query<PersonRow>(
       `SELECT p.*
@@ -521,40 +660,28 @@ class PgIdentityTransaction implements IdentityTransaction {
     return role;
   }
 
-  private async countActiveRegionalAdminsForAccount(
+  private async activeRegionalAdminScopesForAccount(
     tenantId: string,
     accountId: string
-  ): Promise<number> {
-    const rows = await this.db.query<{ count: number }>(
-      `SELECT count(*)::int AS count
+  ): Promise<string[]> {
+    const rows = await this.db.query<{ scope_org_id: string }>(
+      `SELECT DISTINCT ra.scope_org_id
        FROM role_assignment ra
        JOIN role_definition rd ON rd.id = ra.role_id
        WHERE ra.tenant_id = $1 AND ra.account_id = $2
          AND rd.code = 'REGIONAL_ADMIN'
+         AND ra.scope_org_id IS NOT NULL
          AND ra.starts_at <= now()
          AND (ra.ends_at IS NULL OR now() < ra.ends_at)
          AND ra.revoked_at IS NULL`,
       [tenantId, accountId]
     );
-    return rows.rows[0]?.count ?? 0;
+    return rows.rows.map((row) => row.scope_org_id);
   }
+}
 
-  private async countAllActiveRegionalAdmins(tenantId: string): Promise<number> {
-    const rows = await this.db.query<{ count: number }>(
-      `SELECT count(DISTINCT ra.account_id)::int AS count
-       FROM role_assignment ra
-       JOIN role_definition rd ON rd.id = ra.role_id
-       JOIN account a ON a.id = ra.account_id
-       WHERE ra.tenant_id = $1
-         AND rd.code = 'REGIONAL_ADMIN'
-         AND a.status = 'ACTIVE'
-         AND ra.starts_at <= now()
-         AND (ra.ends_at IS NULL OR now() < ra.ends_at)
-         AND ra.revoked_at IS NULL`,
-      [tenantId]
-    );
-    return rows.rows[0]?.count ?? 0;
-  }
+function scopePathPatterns(scopePaths: readonly string[]): string[] {
+  return scopePaths.map((path) => `${path}%`);
 }
 
 function assignmentSql(whereClause: string): string {

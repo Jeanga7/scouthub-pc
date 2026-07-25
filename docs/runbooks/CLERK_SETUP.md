@@ -10,11 +10,12 @@ ScoutHub-PC uses Clerk for identity only. Business roles, scopes and permissions
 4. Set the sign-in URL to `/sign-in`.
 5. Set the sign-up URL to `/sign-up`.
 6. Configure allowed redirect URLs for the local, preview and production origins.
-7. Set `APP_ORIGIN` explicitly for each environment.
-8. Enable restricted or invitation-only sign-up.
-9. Do not enable Clerk Organizations for ScoutHub organization, role or permission modeling.
-10. Do not store ScoutHub business roles, permissions, tenant ids or scope organization ids in Clerk metadata.
-11. Review MFA/session policies with the institution before requiring MFA globally.
+7. Set `APP_ORIGIN` explicitly for each environment. Server runtime refuses to start without it.
+8. If a preview or deployment must accept more than one origin, set `CLERK_AUTHORIZED_PARTIES` to a comma-separated list of explicit origins. Do not derive this from an HTTP `Host` header.
+9. Enable restricted or invitation-only sign-up.
+10. Do not enable Clerk Organizations for ScoutHub organization, role or permission modeling.
+11. Do not store ScoutHub business roles, permissions, tenant ids or scope organization ids in Clerk metadata.
+12. Review MFA/session policies with the institution before requiring MFA globally.
 
 ## Metadata Boundary
 

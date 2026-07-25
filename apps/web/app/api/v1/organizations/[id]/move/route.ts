@@ -25,7 +25,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       payload.tenantId,
       payload.newParentId
     );
-    await authorizeOrganization({
+    const actor = await authorizeOrganization({
       request,
       requestId: id,
       action: "organization.move",
@@ -40,7 +40,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const organization = await organizationUseCases.moveOrganization({
       ...payload,
       organizationId,
-      requestId: id
+      requestId: id,
+      auditActor: { kind: "USER", id: actor.account.id }
     });
     return jsonResponse(mapOrganization(organization), id);
   } catch (error) {

@@ -1,4 +1,5 @@
 import type { OrganizationResponse } from "@scouthub/contracts";
+import { isRoleAssignmentActive } from "@scouthub/domain";
 import { AppShell } from "@scouthub/ui";
 import { requireActor } from "@/identity/http";
 import { mapOrganization } from "@/organizations/http";
@@ -16,7 +17,13 @@ export default async function OrganizationsPage({
   void _searchParams;
   const request = new Request("http://localhost/app/organizations");
   const actor = await requireActor(request, requestId(request));
-  const scope = actor.assignments.find((assignment) => assignment.scopeOrgId !== null);
+  const now = new Date();
+  const scope = actor.assignments.find(
+    (assignment) =>
+      assignment.scopeOrgId !== null &&
+      assignment.permissions.includes("organization.read") &&
+      isRoleAssignmentActive(assignment, now)
+  );
   const tenantId = scope?.tenantId ?? "";
   let organizations: OrganizationResponse[] = [];
   if (tenantId.length > 0 && scope?.scopeOrgId !== null && scope?.scopeOrgId !== undefined) {

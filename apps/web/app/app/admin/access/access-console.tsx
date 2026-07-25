@@ -1,13 +1,27 @@
 "use client";
 
+import type {
+  AccountAdministrationResponse,
+  InvitationResponse,
+  RoleAssignmentResponse
+} from "@scouthub/contracts";
 import { useState } from "react";
 
 interface Props {
   readonly tenantId: string;
   readonly scopeOrgId: string;
+  readonly initialInvitations: readonly InvitationResponse[];
+  readonly initialRoleAssignments: readonly RoleAssignmentResponse[];
+  readonly initialAccounts: readonly AccountAdministrationResponse[];
 }
 
-export function AccessConsole({ tenantId, scopeOrgId }: Props) {
+export function AccessConsole({
+  tenantId,
+  scopeOrgId,
+  initialInvitations,
+  initialRoleAssignments,
+  initialAccounts
+}: Props) {
   const [message, setMessage] = useState("Ready");
 
   async function postJson(path: string, payload: unknown) {
@@ -79,7 +93,39 @@ export function AccessConsole({ tenantId, scopeOrgId }: Props) {
         </label>
         <button type="submit">Envoyer invitation</button>
       </form>
+
+      <section className="panel">
+        <h2>Invitations</h2>
+        <ul>
+          {initialInvitations.map((invitation) => (
+            <li key={invitation.id}>
+              {invitation.email} · {invitation.intendedRoleCode} · {invitation.status}
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="panel">
+        <h2>Roles actifs visibles</h2>
+        <ul>
+          {initialRoleAssignments.map((assignment) => (
+            <li key={assignment.id}>
+              {assignment.accountId} · {assignment.roleCode} · {assignment.scopeType}
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="panel">
+        <h2>Accounts administrables</h2>
+        <ul>
+          {initialAccounts.map((entry) => (
+            <li key={entry.account.id}>
+              {entry.person?.displayName ?? entry.account.id} · {entry.account.primaryEmail} · {entry.account.status}
+            </li>
+          ))}
+        </ul>
+      </section>
     </div>
   );
 }
-
