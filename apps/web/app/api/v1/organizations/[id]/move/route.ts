@@ -1,6 +1,6 @@
 import { moveOrganizationRequestSchema, uuidSchema } from "@scouthub/contracts";
 import {
-  assertDevAdmin,
+  authorizeOrganization,
   handleRouteError,
   jsonResponse,
   mapOrganization,
@@ -11,17 +11,32 @@ import { createOrganizationUseCases } from "@/organizations/service";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
-  const blocked = assertDevAdmin(request);
-  if (blocked !== null) {
-    return blocked;
-  }
-
   const id = requestId(request);
   try {
     const params = await context.params;
     const organizationId = uuidSchema.parse(params.id);
     const payload = moveOrganizationRequestSchema.parse(await request.json());
     const organizationUseCases = createOrganizationUseCases();
+    const current = await organizationUseCases.getOrganization(
+      payload.tenantId,
+      organizationId
+    );
+    const newParent = await organizationUseCases.getOrganization(
+      payload.tenantId,
+      payload.newParentId
+    );
+    await authorizeOrganization({
+      request,
+      requestId: id,
+      action: "organization.move",
+      organization: current
+    });
+    await authorizeOrganization({
+      request,
+      requestId: id,
+      action: "organization.move",
+      organization: newParent
+    });
     const organization = await organizationUseCases.moveOrganization({
       ...payload,
       organizationId,

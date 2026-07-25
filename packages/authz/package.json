@@ -11,5 +11,8 @@
     "lint": "eslint .",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@scouthub/domain": "workspace:*"
   }
 }

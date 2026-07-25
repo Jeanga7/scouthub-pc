@@ -4,9 +4,13 @@ export type {
   QueueMessage
 } from "./ports/async-queue";
 export type {
+  CreateIdentityInvitationInput,
   IdentityProvider,
+  IdentityProfile,
+  IdentityInvitationResult,
   IdentitySession
 } from "./ports/identity-provider";
+export { FakeIdentityProvider } from "./ports/fake-identity-provider";
 export type {
   CreateUploadUrlInput,
   ObjectHandle,
@@ -36,3 +40,20 @@ export type {
   RequestContext
 } from "./organization/audit";
 export { OrganizationUseCases, type IdGenerator } from "./organization/use-cases";
+export type {
+  ActorContext,
+  BootstrapRegionalAdminInput,
+  CreateRoleAssignmentInput,
+  CreatedInvitationDraft,
+  IdentityRepository,
+  IdentityTransaction,
+  InviteAdultUserRecord
+} from "./ports/identity-repository";
+export {
+  IdentityUseCases,
+  type Clock,
+  type CreateRoleAssignmentUseCaseInput,
+  type EnsureAuthenticatedActorInput,
+  type EnsureProvisionedAccountInput,
+  type InviteAdultUserInput
+} from "./identity/use-cases";

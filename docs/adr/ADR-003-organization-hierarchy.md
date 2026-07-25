@@ -40,7 +40,7 @@ Moving an organization is transactional. The repository locks the moved node, th
 
 `audit_event` is append-only and records minimal metadata. It stores no HTTP body, no secret and no full resource copy.
 
-Slice 1 exposes a temporary dev-admin surface only when `APP_ENV` is `local` or `test` and `ENABLE_DEV_ADMIN=true`. Preview and production refuse it even if the flag is set. Slice 2 will replace this with real authentication and server-side policies.
+Slice 1 originally exposed a temporary dev-admin surface for local demonstration. Slice 2 replaces that bypass with real authentication and server-side ScoutHub policies; the organization hierarchy itself remains unchanged.
 
 No delete endpoint or archive policy is implemented in Slice 1 because retention rules are not yet specified.
 

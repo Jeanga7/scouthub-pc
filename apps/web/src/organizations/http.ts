@@ -1,33 +1,19 @@
 import { ApplicationError } from "@scouthub/application";
 import type { OrganizationUseCases } from "@scouthub/application";
-import { isDevAdminEnabled } from "@scouthub/config";
+import { canAccessOrganization } from "@scouthub/authz";
 import {
   organizationResponseSchema,
   problemDetailsSchema,
   type UpdateOrganizationRequest,
   type OrganizationResponse
 } from "@scouthub/contracts";
+import type { PermissionCode } from "@scouthub/domain";
 import type { Organization } from "@scouthub/domain";
 import { ZodError } from "zod";
-import { getServerEnv } from "@/env/server";
+import { requireActor } from "@/identity/http";
 
 export function requestId(request: Request): string {
   return request.headers.get("x-request-id") ?? crypto.randomUUID();
-}
-
-export function assertDevAdmin(request: Request): Response | null {
-  const env = getServerEnv();
-  if (isDevAdminEnabled(env)) {
-    return null;
-  }
-
-  // Until Slice 2 authz exists, the local admin surface is hidden outside local/test.
-  return problemResponse({
-    requestId: requestId(request),
-    status: 404,
-    title: "Not found",
-    detail: "Resource not found."
-  });
 }
 
 export function mapOrganization(organization: Organization): OrganizationResponse {
@@ -49,6 +35,30 @@ export function mapOrganization(organization: Organization): OrganizationRespons
     createdAt: organization.createdAt.toISOString(),
     updatedAt: organization.updatedAt.toISOString()
   });
+}
+
+export async function authorizeOrganization(
+  input: {
+    readonly request: Request;
+    readonly requestId: string;
+    readonly action: PermissionCode;
+    readonly organization: Organization;
+  }
+): Promise<void> {
+  const actor = await requireActor(input.request, input.requestId);
+  const decision = canAccessOrganization(
+    actor,
+    input.action,
+    {
+      tenantId: input.organization.tenantId,
+      organizationId: input.organization.id,
+      path: input.organization.path
+    },
+    { now: new Date() }
+  );
+  if (decision.effect === "deny") {
+    throw new ApplicationError("Permission denied.", "AUTHZ_DENIED", 403);
+  }
 }
 
 type UpdateOrganizationUseCaseInput = Parameters<

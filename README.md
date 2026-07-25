@@ -1,9 +1,8 @@
 # ScoutHub-PC
 
 Plateforme numerique regionale du scoutisme. Ce depot est bootstrappe pour la
-Slice 1 ajoute le modele Organization Tree : tenant NSO, region, district
-optionnel, groupe, unite, hierarchy path, audit et administration locale de
-demonstration.
+Slice 2 ajoute l'identite Clerk, le modele Account/Person, les invitations
+adultes et l'autorisation ScoutHub portee par PostgreSQL.
 
 ## Prerequis
 
@@ -31,8 +30,15 @@ Routes principales :
 - `http://localhost:3000/`
 - `http://localhost:3000/app`
 - `http://localhost:3000/app/organizations`
+- `http://localhost:3000/app/admin/access`
+- `http://localhost:3000/sign-in`
+- `http://localhost:3000/sign-up`
 - `http://localhost:3000/api/v1/health`
-- `POST /api/v1/organizations/root`
+- `GET /api/v1/me`
+- `POST/GET /api/v1/invitations`
+- `POST /api/v1/invitations/:id/revoke`
+- `POST/GET /api/v1/role-assignments`
+- `POST /api/v1/role-assignments/:id/revoke`
 - `POST /api/v1/organizations`
 - `GET/PATCH /api/v1/organizations/:id`
 - `POST /api/v1/organizations/:id/activate`
@@ -41,15 +47,10 @@ Routes principales :
 - `GET /api/v1/organizations/:id/ancestors`
 - `GET /api/v1/organizations/:id/descendants`
 
-La console locale Organization exige :
-
-```bash
-APP_ENV=local
-ENABLE_DEV_ADMIN=true
-```
-
-En `preview` et `production`, le dev-admin est refuse meme si le flag vaut
-`true`. Slice 2 remplacera ce mecanisme par authentification et policies.
+Les routes `/app/*` et les APIs internes utilisent maintenant Clerk pour
+l'authentification et les RoleAssignments ScoutHub en PostgreSQL pour
+l'autorisation. Le bootstrap initial d'un RegionalAdmin se fait uniquement par
+CLI, pas par endpoint public.
 
 ## Gates
 
@@ -80,6 +81,9 @@ Conventions :
 - `test` : variables CI et PostgreSQL ephemere.
 - `preview` : variables runtime Cloudflare, donnees fictives uniquement.
 - `production` : variables/secrets Cloudflare proteges, `DATABASE_URL` secret.
+
+Clerk doit etre configure manuellement en mode restricted/invitation-only. Voir
+`docs/runbooks/CLERK_SETUP.md` et `docs/runbooks/IDENTITY_BOOTSTRAP.md`.
 
 ## Infrastructure
 

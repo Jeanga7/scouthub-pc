@@ -1,6 +1,6 @@
 import { tenantQuerySchema, uuidSchema } from "@scouthub/contracts";
 import {
-  assertDevAdmin,
+  authorizeOrganization,
   handleRouteError,
   jsonResponse,
   mapOrganization,
@@ -11,11 +11,6 @@ import { createOrganizationUseCases } from "@/organizations/service";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
-  const blocked = assertDevAdmin(request);
-  if (blocked !== null) {
-    return blocked;
-  }
-
   const id = requestId(request);
   try {
     const params = await context.params;
@@ -24,6 +19,13 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
       Object.fromEntries(new URL(request.url).searchParams)
     );
     const organizationUseCases = createOrganizationUseCases();
+    const parent = await organizationUseCases.getOrganization(query.tenantId, parentId);
+    await authorizeOrganization({
+      request,
+      requestId: id,
+      action: "organization.read",
+      organization: parent
+    });
     const organizations = await organizationUseCases.listChildren(
       query.tenantId,
       parentId

@@ -1,6 +1,13 @@
 import { AppShell } from "@scouthub/ui";
+import { requestId } from "@/organizations/http";
+import { requireActor } from "@/identity/http";
 
-export default function PrivateAppPlaceholderPage() {
+export const dynamic = "force-dynamic";
+
+export default async function PrivateAppPlaceholderPage() {
+  const request = new Request("http://localhost/app");
+  const actor = await requireActor(request, requestId(request));
+
   return (
     <AppShell>
       <main className="page">
@@ -8,8 +15,7 @@ export default function PrivateAppPlaceholderPage() {
           <p className="eyebrow">Espace prive</p>
           <h1>Console ScoutHub</h1>
           <p>
-            Espace prive - authentification prevue en Slice 2. Les modules
-            metier seront ajoutes dans les slices suivantes.
+            Connecte comme {actor.person?.displayName ?? actor.account.primaryEmail}.
           </p>
         </section>
       </main>

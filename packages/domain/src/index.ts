@@ -28,3 +28,23 @@ export {
   organizationTypes,
   slice1CreatableOrganizationTypes
 } from "./organization/organization-type";
+export type { Account, AccountStatus } from "./identity/account";
+export { isActiveAccount } from "./identity/account";
+export type {
+  Person,
+  PersonClassification,
+  PersonStatus
+} from "./identity/person";
+export { displayNameFor } from "./identity/person";
+export type {
+  AccountInvitation,
+  AccountInvitationStatus
+} from "./identity/invitation";
+export { canProvisionInvitation } from "./identity/invitation";
+export type {
+  PermissionCode,
+  RoleAssignment,
+  RoleCode,
+  RoleScopeType
+} from "./authorization/role";
+export { isRoleAssignmentActive } from "./authorization/role";
