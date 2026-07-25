@@ -1,7 +1,7 @@
 # SCOUTHUB RÉGION — MASTER PRODUCT & SYSTEM SPECIFICATION
 ## Plateforme numérique régionale du scoutisme — de Projects & Impact vers un Scout Operating System
 
-> **Pivot infrastructure v1.1 :** architecture pilote serverless à coût nul visé — Cloudflare Workers/OpenNext + Neon PostgreSQL + R2 + Clerk + Queues/Cron. NestJS/Fastify retirés du MVP.
+> **Pivot infrastructure v1.1 :** architecture pilote serverless à coût nul visé — Cloudflare Workers/OpenNext + Neon PostgreSQL + R2 + Clerk + Queues/Cron comme cible progressive. NestJS/Fastify retirés du MVP.
 
 **Version : 1.1 — 25 juillet 2026**  
 **Nom de travail : ScoutHub Région**  
@@ -1544,9 +1544,11 @@ Contre-exemples :
 
 **Règle :** l’architecture doit rester *serverless-compatible* mais le domaine doit rester *vendor-neutral*.
 
-## 16.2 Stack de référence au bootstrap
+## 16.2 Stack de référence
 
 Référence au **25 juillet 2026** ; toujours utiliser une version patchée et supportée au moment du bootstrap.
+
+La stack ci-dessous décrit la cible du pilote. Les ressources fournisseur sont activées uniquement dans la slice qui les utilise réellement afin d'éviter les coûts, les secrets inutiles et les bindings non consommés.
 
 - **Runtime de build/dev : Node.js 24 LTS** ;
 - **Framework full-stack : Next.js 16.x Active LTS** ;
@@ -1556,12 +1558,12 @@ Référence au **25 juillet 2026** ; toujours utiliser une version patchée et s
 - **ORM / SQL : Drizzle ORM + migrations SQL explicites** ;
 - **Driver edge/serverless : Neon serverless driver** derrière un adapter de persistence ;
 - **Validation : Zod** ;
-- **Stockage objets : Cloudflare R2** derrière `ObjectStorage` ;
-- **Identité : Clerk** derrière `IdentityProvider` ;
+- **Stockage objets cible : Cloudflare R2** derrière `ObjectStorage`, activation réelle en Slice 5 ;
+- **Identité cible : Clerk** derrière `IdentityProvider`, activation réelle en Slice 2 ;
 - **Autorisations : ScoutHub DB + policy engine interne** ; ne pas utiliser Clerk Organizations comme source de vérité métier ;
-- **Asynchrone : Cloudflare Queues** pour les travaux différés ;
-- **Planification : Cloudflare Cron Triggers** ;
-- **Fiabilité des événements : transactional outbox PostgreSQL** lorsque l’opération exige une livraison garantie ;
+- **Asynchrone cible : Cloudflare Queues** pour les travaux différés, activation réelle en Slice 6 ;
+- **Planification cible : Cloudflare Cron Triggers**, activation réelle en Slice 6 ;
+- **Fiabilité des événements cible : transactional outbox PostgreSQL** lorsque l’opération exige une livraison garantie, activation réelle en Slice 6 ;
 - **Observabilité : Workers Logs/Traces + logs structurés** ; adapter OTel externe plus tard si besoin ;
 - **Tests E2E : Playwright** ;
 - **Tests unitaires/intégration : Vitest** ;
@@ -1592,7 +1594,8 @@ scouthub/
 │       │   ├── (public)/          # pages publiques, jamais de données PII brutes
 │       │   ├── (console)/app/     # espace authentifié
 │       │   └── api/v1/            # Route Handlers REST
-│       └── worker/                # queue consumers / scheduled entrypoints si requis
+│       ├── worker/                # custom worker futur si requis en Slice 6
+│       └── wrangler.jsonc         # configuration Cloudflare active
 ├── packages/
 │   ├── domain/                    # entités, value objects, règles métier
 │   ├── application/               # use-cases et ports
@@ -1615,6 +1618,7 @@ scouthub/
 ├── docs/
 │   ├── MASTER_SPEC.md
 │   ├── adr/
+│   ├── reference/                 # archives non normatives
 │   ├── security/
 │   ├── api/
 │   └── runbooks/
@@ -1623,7 +1627,6 @@ scouthub/
 │   └── local/
 ├── AGENTS.md
 ├── docker-compose.yml              # PostgreSQL local uniquement
-├── wrangler.jsonc
 ├── pnpm-workspace.yaml
 └── turbo.json
 ```
@@ -1667,7 +1670,9 @@ Chaque module doit séparer :
 - les tables d’un module ne sont pas manipulées directement par l’UI ;
 - éviter les imports directs entre modules lorsque le contrat métier suffit.
 
-## 16.5 Diagramme conteneurs — pilote zéro coût
+## 16.5 Diagramme conteneurs — cible pilote zéro coût
+
+Ce diagramme représente la cible complète du pilote. En Slice 0, seul le Worker OpenNext généré avec export `fetch`, PostgreSQL local/test, Drizzle, les routes minimales et les ports skeleton sont actifs.
 
 ```text
                          INTERNET
@@ -1701,7 +1706,7 @@ Chaque module doit séparer :
       follow-up reminders
 
 CI/CD: GitHub Actions → Wrangler → Cloudflare
-Backup: scheduled GitHub Action → pg_dump chiffré → R2
+Backup cible: scheduled GitHub Action → pg_dump chiffré → R2
 ```
 
 ## 16.6 Séparation portail public / console interne
@@ -1765,6 +1770,8 @@ GET    /api/v1/reviews?status=pending
 
 Ne pas utiliser `pg-boss` en V1 : un Worker n’est pas un serveur Node permanent.
 
+En Slice 0, aucun `queue()`, aucun `scheduled()`, aucune Cloudflare Queue et aucun Cron Trigger ne sont actifs. L'entrée runtime reste le Worker généré par OpenNext. Le custom Worker et l'outbox transactionnelle sont introduits en Slice 6.
+
 ### Pattern recommandé
 
 1. une transaction métier écrit les données ;
@@ -1799,6 +1806,8 @@ Cas d’usage Cron :
 - tâches de housekeeping.
 
 ## 16.9 Adapters de portabilité obligatoires
+
+Les ports peuvent exister comme interfaces skeleton avant leurs adapters réels. Les SDK, bindings et ressources fournisseur sont introduits uniquement dans la slice concernée : Clerk en Slice 2, R2 en Slice 5, Queues/Cron/outbox en Slice 6.
 
 ```ts
 interface IdentityProvider {
@@ -2428,8 +2437,8 @@ Pour préserver les quotas gratuits, ne pas multiplier les environnements distan
 Local doit fonctionner sans dépendre d’un service payant :
 - PostgreSQL Docker ;
 - fixtures synthétiques ;
-- Clerk development instance ou adapter mock en tests ;
-- bindings Wrangler locaux pour R2/Queues lorsque possible ;
+- adapter mock en tests tant que Clerk réel n'est pas activé ;
+- bindings Wrangler locaux uniquement lorsque la slice correspondante les introduit ;
 - aucun accès production.
 
 ## 27.3 Données production
@@ -2451,13 +2460,13 @@ Cloudflare Workers + OpenNext.
 Neon PostgreSQL.
 
 ### Fichiers
-Cloudflare R2.
+Cloudflare R2, activé avec Evidence en Slice 5.
 
 ### Identity
-Clerk Hobby.
+Clerk Hobby, activé avec Identity en Slice 2.
 
 ### Async
-Cloudflare Queues + Cron Triggers.
+Cloudflare Queues + Cron Triggers, activés avec le custom Worker et l'outbox en Slice 6.
 
 ### DNS/TLS
 Cloudflare ; `workers.dev` acceptable pour le pilote technique, domaine institutionnel ensuite.
@@ -2512,7 +2521,8 @@ Conditions :
 - GitHub Environment protégé ;
 - approbation manuelle au début ;
 - migration DB avant/avec stratégie compatible ;
-- deploy Wrangler ;
+- deploy Wrangler/OpenNext depuis `apps/web` ;
+- `keep_vars` activé pour préserver les variables runtime Cloudflare ;
 - smoke ;
 - rollback documenté.
 
@@ -2520,7 +2530,7 @@ Conditions :
 - Cloudflare API token minimal ;
 - Neon DB URL ;
 - Clerk secrets ;
-- R2 bindings/secrets si nécessaires ;
+- R2 bindings/secrets uniquement à partir de Slice 5 si nécessaires ;
 - aucun secret dans `.env.example`.
 
 ## 27.7 Stratégie de migration DB en serverless
@@ -2604,111 +2614,128 @@ Une story n’est « Done » que si :
 
 ---
 
-# 29. Roadmap produit
+# 29. Roadmap produit normative
 
-## Phase 0 — Foundation
+## Slice 0 — Foundation
 
-Objectif : socle sûr et démontrable.
-
-Livrables :
 - monorepo ;
-- auth adultes ;
-- organizations ;
-- roles/scopes ;
-- audit ;
-- upload ;
-- design system ;
-- CI/CD ;
-- seed région/groupes fictifs.
+- Next.js ;
+- OpenNext / Cloudflare Workers ;
+- PostgreSQL local ;
+- Drizzle ;
+- CI ;
+- health endpoint ;
+- architecture packages ;
+- ports/adapters skeleton.
 
-**Exit criteria :** un responsable peut être invité, voir uniquement son périmètre et charger un fichier privé.
+## Slice 1 — Organization Tree
 
-## Phase 1 — Projects & Impact MVP
+- Région ;
+- District optionnel ;
+- Groupe ;
+- Unité ;
+- hiérarchie ;
+- tenant ;
+- descendants / ancêtres ;
+- audit de base ;
+- CRUD administratif minimal.
 
-- projet ;
-- templates ;
-- ODD ;
-- challenge configurable ;
-- wizard ;
-- preuves ;
-- heures ;
-- indicateurs ;
-- review ;
-- rapport ;
-- suivi ;
-- registre ;
-- dashboard.
+## Slice 2 — Identity, Invitation & Authorization
 
-**Exit criteria :** un projet réel complet peut vivre de bout en bout sans document externe obligatoire, sauf soumission à plateforme officielle.
+- Clerk adapter ;
+- Account / Person séparés ;
+- invitations adultes ;
+- rôle + scope ;
+- policy engine ;
+- restrictions cross-group ;
+- sessions.
 
-## Phase 1.1 — Public Impact Portal
+## Slice 3 — Project Draft
 
-- pages projet ;
-- données agrégées ;
-- médias approuvés ;
-- filtres ;
-- contact partenaire.
+- création ;
+- édition ;
+- lecture ;
+- ownership ;
+- liste ;
+- audit.
 
-## Phase 1.2 — Scouts for SDGs polish
+## Slice 4 — Workflow & Regional Review
 
-- 10 challenges versionnés ;
+- soumission ;
+- commentaires ;
+- request changes ;
+- approbation ;
+- transitions contrôlées ;
+- historique immuable.
+
+## Slice 5 — Evidence + R2
+
+- activation R2 ;
+- signed uploads ;
+- metadata DB ;
+- MIME / taille / checksum ;
+- visibility ;
+- suppression contrôlée ;
+- aucune donnée binaire lourde dans PostgreSQL.
+
+## Slice 6 — Async Foundation
+
+- custom Worker OpenNext ;
+- `queue()` ;
+- `scheduled()` ;
+- Cloudflare Queues ;
+- Cron Triggers ;
+- transactional outbox ;
+- idempotence ;
+- retries ;
+- observabilité async.
+
+## Slice 7 — Scouts for SDGs Configuration
+
+- Initiatives ;
+- Challenges ;
+- versions ;
 - exigences ;
-- checklist export ;
-- tracking publication/badge ;
-- cas projet déjà réalisé.
+- règles de complétion ;
+- sélection depuis un projet.
 
-## Phase 2 — Membership Light
+## Slice 8 — Impact Follow-up
 
-- personnes ;
-- unités ;
-- adhésions ;
-- import ;
-- doublons ;
-- listes nominatives ;
-- statistiques.
+- indicateurs ;
+- observations ;
+- échéances ;
+- suivi temporel ;
+- cas reboisement ;
+- rappels.
 
-Condition : décision claire sur SIGERAS.
+## Slice 9 — Report Snapshot
 
-## Phase 2.1 — Assurance & Documents
+- snapshot immuable ;
+- version ;
+- review status ;
+- génération asynchrone lorsque nécessaire ;
+- stockage R2.
 
-- campagnes ;
-- demandes ;
-- documents ;
-- statuts ;
-- exports.
+## Slice 10 — Public Impact Portal
 
-## Phase 3 — Events & Training
+- `public_project_snapshot` ;
+- listing projets ;
+- pages publiques ;
+- agrégats ;
+- aucune PII brute ;
+- tests anti-leak.
 
-- événements ;
-- inscriptions ;
-- présence ;
-- formation adultes ;
-- qualifications.
+## Slice 11 — Operational Hardening
 
-## Phase 4 — Youth Programme
-
-- progression ;
-- compétences ;
-- badges locaux ;
-- liens ScoutPass ;
-- éventuels comptes jeunes après gouvernance.
-
-## Phase 5 — Partnerships & Funding
-
-- CRM léger ;
-- portfolio ;
-- besoins ;
-- contributions ;
-- reporting.
-
-## Phase 6 — National scale
-
-- multi-région ;
-- national dashboards ;
-- SIGERAS convergence ;
-- SSO ;
-- politiques nationales ;
-- support et exploitation structurés.
+- backups ;
+- restauration ;
+- quotas ;
+- security headers ;
+- rate limiting ;
+- observabilité ;
+- runbooks ;
+- rotation secrets ;
+- production readiness.
 
 ---
 
@@ -2726,9 +2753,11 @@ Acceptance :
 - lint/typecheck/test/build ;
 - PostgreSQL local via Docker Compose ;
 - Drizzle + migrations ;
-- Wrangler configuré ;
-- bindings R2/Queues définis par environment ;
+- Wrangler configuré dans `apps/web/wrangler.jsonc` ;
+- aucun binding R2, Queue ou Cron actif en Slice 0 ;
+- OpenNext generated Worker utilisé comme entrée runtime, export `fetch` uniquement ;
 - packages domain/application/infrastructure créés ;
+- ports provider skeleton créés sans SDK fournisseur dans `domain` ou `application` ;
 - README local ;
 - aucun NestJS/Fastify/Redis/Kafka.
 
@@ -2744,33 +2773,34 @@ Acceptance :
 - validation env au startup ;
 - `.env.example` sans secret ;
 - aucun secret repo ;
-- séparation local/staging/prod ;
+- séparation local/test/preview/production ;
+- `DATABASE_URL` reste secret ;
+- `keep_vars` ou équivalent protège les variables runtime Cloudflare au deploy ;
 - script/checklist de quotas Workers/R2/Neon/Clerk ;
 - documentation du budget $0 et seuils d’upgrade.
 
 ## Epic E0.1 — Infrastructure adapters
 
 ### E0.1-S1 Database adapter
-- port repository ;
-- adapter Neon/Drizzle ;
+- port repository si utile à la fondation ;
+- adapter Drizzle/PostgreSQL minimal ;
 - tests avec PostgreSQL local.
 
 ### E0.1-S2 Object storage adapter
 - port `ObjectStorage` ;
-- adapter R2 ;
-- upload direct signé ;
-- adapter/fake local pour tests.
+- adapter/fake local pour tests si nécessaire ;
+- adapter R2, binding R2 et upload direct signé introduits en Slice 5.
 
 ### E0.1-S3 Identity adapter
 - port `IdentityProvider` ;
-- adapter Clerk ;
+- adapter mock/test si nécessaire ;
+- adapter Clerk introduit en Slice 2 ;
 - aucun rôle/scope métier dans Clerk comme source de vérité.
 
 ### E0.1-S4 Queue adapter
 - port `AsyncQueue` ;
-- adapter Cloudflare Queues ;
-- consumer idempotent ;
-- outbox table minimale.
+- adapter skeleton sans garantie d'idempotence fournisseur ;
+- Cloudflare Queues, consumer idempotent et outbox transactionnelle introduits en Slice 6.
 
 ## Epic E1 — Identity
 
@@ -3209,9 +3239,8 @@ Copier ce document vers :
 
 Créer :
 - `AGENTS.md` ;
-- `docs/ROADMAP.md` ;
-- `docs/BACKLOG.md` ;
 - `docs/adr/` ;
+- `docs/reference/` pour archives non normatives ;
 - `docs/security/THREAT_MODEL.md` ;
 - `docs/security/DATA_CLASSIFICATION.md` ;
 - `docs/api/openapi.yaml` généré ;
@@ -3232,9 +3261,8 @@ Architecture imposée :
 - TypeScript strict
 - Drizzle + PostgreSQL
 - Neon en production, PostgreSQL Docker local
-- Cloudflare R2 via ObjectStorage adapter
-- Clerk via IdentityProvider adapter
-- Cloudflare Queues/Cron via AsyncQueue adapter
+- ports skeleton IdentityProvider, ObjectStorage, AsyncQueue
+- Clerk cible Slice 2, R2 cible Slice 5, Queues/Cron cible Slice 6
 - aucune dépendance fournisseur dans domain/application
 - aucun NestJS/Fastify/Redis/Kafka/Kubernetes
 - aucun service payant activé
@@ -3256,38 +3284,41 @@ Après codage :
 
 ## 40.4 Ordre de slices
 
-### Slice 0 — bootstrap
-Repo + CI + health endpoint.
+### Slice 0 — Foundation
+Monorepo, Next.js, OpenNext/Workers, PostgreSQL local, Drizzle, CI, health endpoint, packages et ports skeleton.
 
-### Slice 1 — organization tree
-Seed + CRUD admin + tests.
+### Slice 1 — Organization Tree
+Région, District optionnel, Groupe, Unité, hiérarchie, tenant, descendants/ancêtres, audit de base, CRUD administratif minimal.
 
-### Slice 2 — invite/login/roles
-Un chef A ne voit que A.
+### Slice 2 — Identity, Invitation & Authorization
+Clerk adapter, Account/Person séparés, invitations adultes, rôle + scope, policy engine, restrictions cross-group, sessions.
 
-### Slice 3 — project draft
-Créer/lister/éditer projet.
+### Slice 3 — Project Draft
+Création, édition, lecture, ownership, liste, audit.
 
-### Slice 4 — state machine + review
-Submit/request changes/approve.
+### Slice 4 — Workflow & Regional Review
+Soumission, commentaires, request changes, approbation, transitions contrôlées, historique immuable.
 
-### Slice 5 — evidence
-Upload sécurisé.
+### Slice 5 — Evidence + R2
+Activation R2, signed uploads, metadata DB, MIME/taille/checksum, visibility, suppression contrôlée, aucune donnée binaire lourde dans PostgreSQL.
 
-### Slice 6 — challenge config
-Référentiel versionné.
+### Slice 6 — Async Foundation
+Custom Worker OpenNext, `queue()`, `scheduled()`, Cloudflare Queues, Cron Triggers, transactional outbox, idempotence, retries, observabilité async.
 
-### Slice 7 — impact
-Indicateurs + follow-up.
+### Slice 7 — Scouts for SDGs Configuration
+Initiatives, Challenges, versions, exigences, règles de complétion, sélection depuis un projet.
 
-### Slice 8 — report
-Snapshot + document.
+### Slice 8 — Impact Follow-up
+Indicateurs, observations, échéances, suivi temporel, cas reboisement, rappels.
 
-### Slice 9 — public portal
-Publication filtrée.
+### Slice 9 — Report Snapshot
+Snapshot immuable, version, review status, génération asynchrone lorsque nécessaire, stockage R2.
 
-### Slice 10 — hardening
-Authz matrix, security, observability, backup.
+### Slice 10 — Public Impact Portal
+`public_project_snapshot`, listing projets, pages publiques, agrégats, aucune PII brute, tests anti-leak.
+
+### Slice 11 — Operational Hardening
+Backups, restauration, quotas, security headers, rate limiting, observabilité, runbooks, rotation secrets, production readiness.
 
 ## 40.5 Regle de commit
 
@@ -3330,7 +3361,7 @@ Un commit = intention claire. Exemples :
 - Use explicit ports/adapters.
 - PostgreSQL remains the transactional source of truth.
 - Clerk is identity only; roles/scopes live in ScoutHub.
-- Queues/Cron for async; no persistent process assumption.
+- Queues/Cron are the target async primitives introduced in Slice 6; no persistent process assumption.
 
 ## Cost
 - Target $0/month pilot infrastructure.
@@ -3359,7 +3390,8 @@ Un commit = intention claire. Exemples :
 - monorepo ;
 - `apps/web` ;
 - Next.js/OpenNext ;
-- Wrangler ;
+- Wrangler dans `apps/web/wrangler.jsonc` ;
+- OpenNext generated Worker, export `fetch` uniquement ;
 - packages domain/application/infrastructure ;
 - PostgreSQL local ;
 - Drizzle ;
@@ -3368,39 +3400,26 @@ Un commit = intention claire. Exemples :
 
 **Gate :** build Cloudflare valide et aucune dépendance Node incompatible.
 
-## Lot B — Infrastructure adapters
-- `IdentityProvider` + Clerk adapter ;
-- `ObjectStorage` + R2 adapter ;
-- `AsyncQueue` + Queues adapter ;
-- repository + Neon adapter ;
-- fake adapters pour tests.
+## Lot B — Ports skeleton
+- `IdentityProvider` port ;
+- `ObjectStorage` port ;
+- `AsyncQueue` port sans promesse d'idempotence fournisseur ;
+- repository minimal si utile ;
+- fake adapters pour tests ;
+- aucun SDK Clerk, R2, Queue ou Neon dans `domain` / `application`.
 
 **Gate :** domaine sans import fournisseur.
 
-## Lot C — Security foundation
-- account/person separation ;
-- session server-side ;
-- policy engine squelette ;
-- audit base ;
-- headers sécurité ;
-- logs sans PII.
+## Lot C — Config, documentation et coûts
+- `.env.example` sans secret ;
+- conventions local/test/preview/production ;
+- `DATABASE_URL` secret ;
+- `keep_vars` Cloudflare pour préserver les variables runtime au deploy ;
+- runbooks de démarrage, coût et déploiement.
 
-## Lot D — Organization/Authz
-- schema Région/District/Groupe/Unité ;
-- seed fictif ;
-- role assignments ;
-- scope traversal ;
-- tests cross-group négatifs.
+**Gate :** aucun secret commité et aucune ressource payante/inutilisée activée.
 
-## Lot E — First vertical feature
-- create project ;
-- list project ;
-- detail ;
-- group scope ;
-- audit ;
-- public snapshot absent par défaut.
-
-Le premier démonstrateur doit prouver **permission + workflow + portabilité + coût contrôlé**, pas la quantité de fonctionnalités.
+Stop après ces lots pour Slice 0. Ne pas commencer Organization, Identity réelle, Project, Evidence, Challenges ou tout autre métier avant la slice normative correspondante.
 
 # 43. Décisions à obtenir du Commissariat avant production réelle
 
@@ -3541,8 +3560,8 @@ La valeur ultime n’est pas le nombre de fonctionnalités ; c’est la capacit�
 - [ ] Phase 0 confirmée
 - [ ] aucun vrai fichier mineur utilisé en développement
 - [ ] environnement local reproductible
-- [ ] modèle Organization validé
-- [ ] rôles MVP validés
+- [ ] roadmap Slice 0 → Slice 11 comprise
+- [ ] décisions Organization et rôles identifiées comme Slice 1/2
 - [ ] décisions ADR enregistrées
 - [ ] CI obligatoire
 - [ ] threat model initial
@@ -3555,21 +3574,17 @@ La valeur ultime n’est pas le nombre de fonctionnalités ; c’est la capacit�
 
 **Construire dans cet ordre :**
 
-1. Core engineering ;
-2. Organizations ;
-3. Auth + authorization ;
-4. Audit ;
-5. Project draft ;
-6. Project state machine ;
-7. Review ;
-8. Evidence ;
-9. Challenges ;
-10. Impact ;
-11. Reporting ;
-12. Public portal ;
-13. Hardening ;
-14. Pilot ;
-15. Membership seulement après décision SIGERAS.
+1. Slice 0 — Foundation ;
+2. Slice 1 — Organization Tree ;
+3. Slice 2 — Identity, Invitation & Authorization ;
+4. Slice 3 — Project Draft ;
+5. Slice 4 — Workflow & Regional Review ;
+6. Slice 5 — Evidence + R2 ;
+7. Slice 6 — Async Foundation ;
+8. Slice 7 — Scouts for SDGs Configuration ;
+9. Slice 8 — Impact Follow-up ;
+10. Slice 9 — Report Snapshot ;
+11. Slice 10 — Public Impact Portal ;
+12. Slice 11 — Operational Hardening.
 
 Le projet est suffisamment défini pour commencer le développement, à condition que Codex traite ce document comme **source de vérité fonctionnelle** et que les zones institutionnelles non décidées restent configurables plutôt que codées comme vérités définitives.
-

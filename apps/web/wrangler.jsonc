@@ -11,32 +11,5 @@
   "observability": {
     "enabled": true
   },
-  "vars": {
-    "APP_ENV": "local",
-    "NEXT_PUBLIC_APP_NAME": "ScoutHub Region"
-  },
-  "r2_buckets": [
-    {
-      "binding": "SCOUTHUB_OBJECTS",
-      "bucket_name": "scouthub-region-objects-preview"
-    }
-  ],
-  "queues": {
-    "producers": [
-      {
-        "binding": "SCOUTHUB_QUEUE",
-        "queue": "scouthub-region-async-preview"
-      }
-    ],
-    "consumers": [
-      {
-        "queue": "scouthub-region-async-preview",
-        "max_batch_size": 10,
-        "max_batch_timeout": 30
-      }
-    ]
-  },
-  "triggers": {
-    "crons": ["*/15 * * * *"]
-  }
+  "keep_vars": true
 }

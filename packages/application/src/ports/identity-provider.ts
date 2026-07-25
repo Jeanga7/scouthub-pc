@@ -1,4 +1,5 @@
 export interface IdentitySession {
+  readonly sessionId: string;
   readonly subjectId: string;
   readonly emailVerified: boolean;
   readonly assuranceLevel: "standard" | "mfa";

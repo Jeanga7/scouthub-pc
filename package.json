@@ -4,7 +4,7 @@
   "private": true,
   "packageManager": "pnpm@10.34.4",
   "engines": {
-    "node": ">=20.19.0"
+    "node": ">=24.0.0"
   },
   "scripts": {
     "build": "turbo run build",
@@ -12,7 +12,6 @@
     "check:boundaries": "node scripts/check-boundaries.mjs",
     "db:generate": "pnpm --filter @scouthub/database db:generate",
     "db:migrate": "pnpm --filter @scouthub/database db:migrate",
-    "db:push": "pnpm --filter @scouthub/database db:push",
     "db:studio": "pnpm --filter @scouthub/database db:studio",
     "dev": "turbo run dev --filter @scouthub/web",
     "lint": "turbo run lint && pnpm check:boundaries",

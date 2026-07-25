@@ -2,7 +2,7 @@ SHELL := /bin/sh
 
 .DEFAULT_GOAL := help
 
-.PHONY: help install dev db-up db-down db-ps db-logs migrate db-generate db-studio lint typecheck test build build-workers check ci
+.PHONY: help install dev db-up db-down db-ps db-logs migrate db-generate db-studio lint typecheck test build build-workers preview deploy cf-typegen check ci
 
 help:
 	@printf '%s\n' 'ScoutHub Region commands'
@@ -19,6 +19,9 @@ help:
 	@printf '%s\n' '  make test           Run unit tests'
 	@printf '%s\n' '  make build          Build all workspaces'
 	@printf '%s\n' '  make build-workers  Build OpenNext Cloudflare Workers bundle'
+	@printf '%s\n' '  make preview        Build and preview the Workers bundle'
+	@printf '%s\n' '  make deploy         Build and deploy the Workers bundle'
+	@printf '%s\n' '  make cf-typegen     Generate Cloudflare runtime types'
 	@printf '%s\n' '  make check          Run lint, typecheck, test, build'
 	@printf '%s\n' '  make ci             Run check, Workers build, migrations'
 	@printf '%s\n' ''
@@ -71,6 +74,15 @@ build:
 build-workers:
 	pnpm build:workers
 
+preview:
+	pnpm --filter @scouthub/web preview
+
+deploy:
+	pnpm --filter @scouthub/web deploy
+
+cf-typegen:
+	pnpm --filter @scouthub/web cf:typegen
+
 check: lint typecheck test build
 
-ci: check build-workers migrate
+ci: check migrate build-workers

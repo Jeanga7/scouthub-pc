@@ -6,11 +6,11 @@ via OpenNext, PostgreSQL local, Drizzle et packages d'architecture minimaux.
 
 ## Prerequis
 
-- Node.js 24 recommande pour respecter la specification cible.
+- Node.js 24.
 - pnpm 10.34.4.
 - Docker pour PostgreSQL local.
 
-Le runtime local actuel peut utiliser Node.js >= 20.19, mais la CI cible Node 24.
+Le depot fournit `.node-version` et `.nvmrc` avec la valeur `24`.
 
 ## Demarrage local
 
@@ -52,9 +52,17 @@ make ci
 Copier les valeurs fictives de `.env.example` dans un fichier local non commite
 si necessaire. Aucun secret reel ne doit etre commite.
 
+Conventions :
+
+- `local` : `.env` ou `.env.development` non commite, PostgreSQL Docker.
+- `test` : variables CI et PostgreSQL ephemere.
+- `preview` : variables runtime Cloudflare, donnees fictives uniquement.
+- `production` : variables/secrets Cloudflare proteges, `DATABASE_URL` secret.
+
 ## Infrastructure
 
 Local/test utilise PostgreSQL Docker. La production vise Neon PostgreSQL,
 Cloudflare Workers, R2, Queues/Cron et Clerk, toujours derriere des
-ports/adapters. Les fichiers `wrangler.jsonc` declarent les bindings attendus,
-mais aucune ressource cloud ni service payant n'est cree automatiquement.
+ports/adapters. La seule configuration Wrangler active est
+`apps/web/wrangler.jsonc`; elle ne declare pas encore R2, Queues ou Cron.
+Aucune ressource cloud ni service payant n'est cree automatiquement.

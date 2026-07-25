@@ -6,7 +6,6 @@ export interface QueueMessage<TPayload = unknown> {
 
 export interface EnqueueOptions {
   readonly delaySeconds?: number;
-  readonly idempotencyKey?: string;
 }
 
 export interface AsyncQueue {
