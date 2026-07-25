@@ -120,7 +120,6 @@ export interface IdentityTransaction {
     now: Date
   ): Promise<AccountAdministrationView | null>;
   findAccountAdministrationViewForUpdate(accountId: string): Promise<AccountAdministrationView | null>;
-  countActiveRegionalAdmins(tenantId: string, regionOrganizationId: string, now: Date): Promise<number>;
   findOrganizationResource(tenantId: string, organizationId: string): Promise<ScopedOrganizationResource | null>;
   getRolePermissions(roleCode: RoleCode): Promise<readonly PermissionCode[]>;
   appendAuditEvent(input: AuditEventInput): Promise<void>;

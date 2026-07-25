@@ -422,13 +422,18 @@ class PgIdentityTransaction implements IdentityTransaction {
       target?.roleCode === "REGIONAL_ADMIN" &&
       target.scopeOrgId !== null
     ) {
-      // The "last RegionalAdmin" invariant is serialized on the Region row so
-      // concurrent revocations cannot both observe count=2 and leave the region
-      // without an administrator.
+      // The invariant is about effective RegionalAdmin access, not raw
+      // RoleAssignment row counts. The Region lock serializes concurrent
+      // revocations before checking what access remains after this assignment.
       await this.lockRegion(input.tenantId, target.scopeOrgId);
       if (await this.isActiveRegionalAdminAssignmentForActiveAccount(input.tenantId, target.id, new Date())) {
-        const admins = await this.countActiveRegionalAdmins(input.tenantId, target.scopeOrgId, new Date());
-        if (admins <= 1) {
+        const hasOtherAccess = await this.hasOtherActiveRegionalAdminAssignment({
+          tenantId: input.tenantId,
+          regionOrganizationId: target.scopeOrgId,
+          excludedRoleAssignmentId: target.id,
+          now: new Date()
+        });
+        if (!hasOtherAccess) {
           throw new ConflictError("Cannot revoke the last active Regional Admin for this region.");
         }
       }
@@ -459,11 +464,17 @@ class PgIdentityTransaction implements IdentityTransaction {
         input.accountId
       );
       for (const regionOrganizationId of regionalAdminScopes) {
-        // Account suspension is global, so removing a RegionalAdmin's effective
-        // access must hold the same per-region lock as role revocation.
+        // Account suspension is global. The guard excludes the suspended account
+        // and checks that another ACTIVE account keeps effective RegionalAdmin
+        // access for the locked region.
         await this.lockRegion(input.tenantId, regionOrganizationId);
-        const admins = await this.countActiveRegionalAdmins(input.tenantId, regionOrganizationId, new Date());
-        if (admins <= 1) {
+        const hasOtherAccount = await this.hasOtherActiveRegionalAdminAccount({
+          tenantId: input.tenantId,
+          regionOrganizationId,
+          excludedAccountId: input.accountId,
+          now: new Date()
+        });
+        if (!hasOtherAccount) {
           throw new ConflictError("Cannot suspend the last active Regional Admin.");
         }
       }
@@ -480,28 +491,6 @@ class PgIdentityTransaction implements IdentityTransaction {
       [input.accountId, input.tenantId]
     );
     return rows.rows[0] === undefined ? null : mapAccount(rows.rows[0]);
-  }
-
-  async countActiveRegionalAdmins(
-    tenantId: string,
-    regionOrganizationId: string,
-    now: Date
-  ): Promise<number> {
-    const rows = await this.db.query<{ count: number }>(
-      `SELECT count(*)::int AS count
-       FROM role_assignment ra
-       JOIN role_definition rd ON rd.id = ra.role_id
-       JOIN account a ON a.id = ra.account_id
-       WHERE ra.tenant_id = $1
-         AND rd.code = 'REGIONAL_ADMIN'
-         AND a.status = 'ACTIVE'
-         AND ra.scope_org_id = $2
-         AND ra.starts_at <= $3
-         AND (ra.ends_at IS NULL OR $3 < ra.ends_at)
-         AND ra.revoked_at IS NULL`,
-      [tenantId, regionOrganizationId, now]
-    );
-    return rows.rows[0]?.count ?? 0;
   }
 
   async findOrganizationResource(
@@ -766,6 +755,63 @@ class PgIdentityTransaction implements IdentityTransaction {
           AND ra.revoked_at IS NULL
       ) AS exists`,
       [tenantId, roleAssignmentId, now]
+    );
+    return rows.rows[0]?.exists === true;
+  }
+
+  private async hasOtherActiveRegionalAdminAssignment(input: {
+    readonly tenantId: string;
+    readonly regionOrganizationId: string;
+    readonly excludedRoleAssignmentId: string;
+    readonly now: Date;
+  }): Promise<boolean> {
+    const rows = await this.db.query<{ exists: boolean }>(
+      `SELECT EXISTS (
+        SELECT 1
+        FROM role_assignment ra
+        JOIN role_definition rd ON rd.id = ra.role_id
+        JOIN account a ON a.id = ra.account_id
+        WHERE ra.tenant_id = $1
+          AND rd.code = 'REGIONAL_ADMIN'
+          AND a.status = 'ACTIVE'
+          AND ra.scope_org_id = $2
+          AND ra.id <> $3
+          AND ra.starts_at <= $4
+          AND (ra.ends_at IS NULL OR $4 < ra.ends_at)
+          AND ra.revoked_at IS NULL
+      ) AS exists`,
+      [
+        input.tenantId,
+        input.regionOrganizationId,
+        input.excludedRoleAssignmentId,
+        input.now
+      ]
+    );
+    return rows.rows[0]?.exists === true;
+  }
+
+  private async hasOtherActiveRegionalAdminAccount(input: {
+    readonly tenantId: string;
+    readonly regionOrganizationId: string;
+    readonly excludedAccountId: string;
+    readonly now: Date;
+  }): Promise<boolean> {
+    const rows = await this.db.query<{ exists: boolean }>(
+      `SELECT EXISTS (
+        SELECT 1
+        FROM role_assignment ra
+        JOIN role_definition rd ON rd.id = ra.role_id
+        JOIN account a ON a.id = ra.account_id
+        WHERE ra.tenant_id = $1
+          AND rd.code = 'REGIONAL_ADMIN'
+          AND a.status = 'ACTIVE'
+          AND ra.scope_org_id = $2
+          AND ra.account_id <> $3
+          AND ra.starts_at <= $4
+          AND (ra.ends_at IS NULL OR $4 < ra.ends_at)
+          AND ra.revoked_at IS NULL
+      ) AS exists`,
+      [input.tenantId, input.regionOrganizationId, input.excludedAccountId, input.now]
     );
     return rows.rows[0]?.exists === true;
   }

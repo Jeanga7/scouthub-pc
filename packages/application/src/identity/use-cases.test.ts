@@ -94,7 +94,6 @@ class PendingFailureTransaction implements IdentityTransaction {
   listAccountsForScopes = unexpected;
   findAccountAdministrationView = unexpected;
   findAccountAdministrationViewForUpdate = unexpected;
-  countActiveRegionalAdmins = unexpected;
   getRolePermissions = unexpected;
 
   createInvitationDraft(input: InviteAdultUserRecord): Promise<CreatedInvitationDraft> {

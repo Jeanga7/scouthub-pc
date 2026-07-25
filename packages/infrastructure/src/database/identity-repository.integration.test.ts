@@ -376,6 +376,180 @@ describe("PgIdentityRepository", () => {
     ).rejects.toBeInstanceOf(ConflictError);
     expect(await auditCount("identity.role_revoked", revoked.id)).toBe(1);
   });
+
+  it("does not let duplicate RegionalAdmin assignments bypass account suspension guard", async () => {
+    await createOrganizations();
+    const useCases = createIdentityUseCases(new FakeIdentityProvider(), []);
+    const duplicateAssignmentId = crypto.randomUUID();
+    const admin = await createRegionalAdminFixture(useCases, {
+      tenantId: ids.tenant,
+      regionOrganizationId: ids.region,
+      subjectId: "user_admin",
+      email: "admin@example.test",
+      firstName: "Awa",
+      lastName: "Ndiaye",
+      accountId: ids.adminAccount,
+      personId: ids.adminPerson,
+      assignmentId: ids.adminAssignment
+    });
+    await insertRegionalAdminAssignment({
+      tenantId: ids.tenant,
+      accountId: admin.account.id,
+      regionOrganizationId: ids.region,
+      assignmentId: duplicateAssignmentId,
+      startsAt: new Date(Date.now() - 1_000),
+      endsAt: null
+    });
+
+    await expect(
+      useCases.suspendAccount({
+        actor: admin,
+        tenantId: ids.tenant,
+        accountId: admin.account.id
+      })
+    ).rejects.toThrow("last active Regional Admin");
+  });
+
+  it("allows revoking one duplicate RegionalAdmin assignment when another remains effective", async () => {
+    await createOrganizations();
+    const useCases = createIdentityUseCases(new FakeIdentityProvider(), [auditId(1)]);
+    const duplicateAssignmentId = crypto.randomUUID();
+    const admin = await createRegionalAdminFixture(useCases, {
+      tenantId: ids.tenant,
+      regionOrganizationId: ids.region,
+      subjectId: "user_admin",
+      email: "admin@example.test",
+      firstName: "Awa",
+      lastName: "Ndiaye",
+      accountId: ids.adminAccount,
+      personId: ids.adminPerson,
+      assignmentId: ids.adminAssignment
+    });
+    await insertRegionalAdminAssignment({
+      tenantId: ids.tenant,
+      accountId: admin.account.id,
+      regionOrganizationId: ids.region,
+      assignmentId: duplicateAssignmentId,
+      startsAt: new Date(Date.now() - 1_000),
+      endsAt: null
+    });
+
+    const revoked = await useCases.revokeRoleAssignment({
+      actor: admin,
+      tenantId: ids.tenant,
+      roleAssignmentId: ids.adminAssignment,
+      reason: "duplicate cleanup"
+    });
+
+    expect(revoked.revokedAt).not.toBeNull();
+    expect(await activeRegionalAdminAssignmentExists(duplicateAssignmentId)).toBe(true);
+  });
+
+  it("allows suspending one RegionalAdmin account when another active account remains", async () => {
+    await createOrganizations();
+    const fakeIdentity = new FakeIdentityProvider();
+    const useCases = createIdentityUseCases(fakeIdentity, [auditId(1)]);
+    const adminA = await createRegionalAdminFixture(useCases, {
+      tenantId: ids.tenant,
+      regionOrganizationId: ids.region,
+      subjectId: "user_admin_a",
+      email: "admin-a@example.test",
+      firstName: "Awa",
+      lastName: "Ndiaye",
+      accountId: ids.adminAccount,
+      personId: ids.adminPerson,
+      assignmentId: ids.adminAssignment
+    });
+    await createRegionalAdminFixture(useCases, {
+      tenantId: ids.tenant,
+      regionOrganizationId: ids.region,
+      subjectId: "user_admin_b",
+      email: "admin-b@example.test",
+      firstName: "Binta",
+      lastName: "Sarr",
+      accountId: crypto.randomUUID(),
+      personId: crypto.randomUUID(),
+      assignmentId: crypto.randomUUID()
+    });
+
+    const suspended = await useCases.suspendAccount({
+      actor: adminA,
+      tenantId: ids.tenant,
+      accountId: adminA.account.id
+    });
+
+    expect(suspended.status).toBe("SUSPENDED");
+    expect(await effectiveRegionalAdminAccountCount(ids.tenant, ids.region)).toBe(1);
+  });
+
+  it("does not count non-effective RegionalAdmin assignments as remaining access", async () => {
+    await createOrganizations();
+    const useCases = createIdentityUseCases(new FakeIdentityProvider(), []);
+    const admin = await createRegionalAdminFixture(useCases, {
+      tenantId: ids.tenant,
+      regionOrganizationId: ids.region,
+      subjectId: "user_admin",
+      email: "admin@example.test",
+      firstName: "Awa",
+      lastName: "Ndiaye",
+      accountId: ids.adminAccount,
+      personId: ids.adminPerson,
+      assignmentId: ids.adminAssignment
+    });
+    await insertAccountWithRoles({
+      accountId: crypto.randomUUID(),
+      primaryEmail: "inactive-admin@example.test",
+      tenantId: ids.tenant,
+      personId: crypto.randomUUID(),
+      displayName: "Inactive Admin",
+      accountStatus: "SUSPENDED",
+      assignments: [
+        {
+          roleCode: "REGIONAL_ADMIN",
+          scopeOrgId: ids.region,
+          startsAt: new Date(Date.now() - 1_000),
+          endsAt: null
+        }
+      ]
+    });
+    await insertAccountWithRoles({
+      accountId: crypto.randomUUID(),
+      primaryEmail: "non-effective@example.test",
+      tenantId: ids.tenant,
+      personId: crypto.randomUUID(),
+      displayName: "Non Effective Admin",
+      assignments: [
+        {
+          roleCode: "REGIONAL_ADMIN",
+          scopeOrgId: ids.region,
+          startsAt: new Date("2020-01-01T00:00:00.000Z"),
+          endsAt: new Date("2020-02-01T00:00:00.000Z")
+        },
+        {
+          roleCode: "REGIONAL_ADMIN",
+          scopeOrgId: ids.region,
+          startsAt: new Date(Date.now() + 3_600_000),
+          endsAt: null
+        },
+        {
+          roleCode: "REGIONAL_ADMIN",
+          scopeOrgId: ids.region,
+          startsAt: new Date(Date.now() - 1_000),
+          endsAt: null,
+          revokedAt: new Date(Date.now() - 500)
+        }
+      ]
+    });
+
+    await expect(
+      useCases.revokeRoleAssignment({
+        actor: admin,
+        tenantId: ids.tenant,
+        roleAssignmentId: ids.adminAssignment,
+        reason: "test"
+      })
+    ).rejects.toThrow("last active Regional Admin");
+  });
 });
 
 async function createRegionalAdminFixture(
@@ -427,6 +601,7 @@ async function insertAccountWithRoles(input: {
   readonly tenantId: string;
   readonly personId: string;
   readonly displayName: string;
+  readonly accountStatus?: "ACTIVE" | "SUSPENDED";
     readonly assignments: readonly {
     readonly id?: string;
     readonly roleCode: string;
@@ -434,14 +609,15 @@ async function insertAccountWithRoles(input: {
     readonly scopeOrgId: string;
     readonly startsAt: Date;
     readonly endsAt: Date | null;
+    readonly revokedAt?: Date | null;
   }[];
 }): Promise<void> {
   const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
   try {
     await pool.query(
       `INSERT INTO account (id, external_identity_id, primary_email, status, email_verified_at)
-       VALUES ($1, $2, $3, 'ACTIVE', now())`,
-      [input.accountId, input.externalIdentityId ?? null, input.primaryEmail]
+       VALUES ($1, $2, $3, $4, now())`,
+      [input.accountId, input.externalIdentityId ?? null, input.primaryEmail, input.accountStatus ?? "ACTIVE"]
     );
     await pool.query(
       `INSERT INTO person (id, tenant_id, first_name, last_name, display_name)
@@ -460,9 +636,9 @@ async function insertAccountWithRoles(input: {
       await pool.query(
         `INSERT INTO role_assignment (
           id, tenant_id, account_id, role_id, scope_type, scope_org_id,
-          starts_at, ends_at, granted_by_account_id
+          starts_at, ends_at, granted_by_account_id, revoked_at
         )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $3)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $3, $9)`,
         [
           assignment.id ?? crypto.randomUUID(),
           input.tenantId,
@@ -471,10 +647,88 @@ async function insertAccountWithRoles(input: {
           assignment.scopeType ?? "REGION",
           assignment.scopeOrgId,
           assignment.startsAt,
-          assignment.endsAt
+          assignment.endsAt,
+          assignment.revokedAt ?? null
         ]
       );
     }
+  } finally {
+    await pool.end();
+  }
+}
+
+async function insertRegionalAdminAssignment(input: {
+  readonly tenantId: string;
+  readonly accountId: string;
+  readonly regionOrganizationId: string;
+  readonly assignmentId: string;
+  readonly startsAt: Date;
+  readonly endsAt: Date | null;
+}): Promise<void> {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  try {
+    const role = await pool.query<{ id: string }>(
+      "SELECT id FROM role_definition WHERE code = 'REGIONAL_ADMIN'"
+    );
+    await pool.query(
+      `INSERT INTO role_assignment (
+        id, tenant_id, account_id, role_id, scope_type, scope_org_id,
+        starts_at, ends_at, granted_by_account_id
+      )
+       VALUES ($1, $2, $3, $4, 'REGION', $5, $6, $7, $3)`,
+      [
+        input.assignmentId,
+        input.tenantId,
+        input.accountId,
+        role.rows[0]?.id,
+        input.regionOrganizationId,
+        input.startsAt,
+        input.endsAt
+      ]
+    );
+  } finally {
+    await pool.end();
+  }
+}
+
+async function activeRegionalAdminAssignmentExists(assignmentId: string): Promise<boolean> {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  try {
+    const rows = await pool.query<{ exists: boolean }>(
+      `SELECT EXISTS (
+        SELECT 1
+        FROM role_assignment
+        WHERE id = $1 AND revoked_at IS NULL
+      ) AS exists`,
+      [assignmentId]
+    );
+    return rows.rows[0]?.exists === true;
+  } finally {
+    await pool.end();
+  }
+}
+
+async function effectiveRegionalAdminAccountCount(
+  tenantId: string,
+  regionOrganizationId: string
+): Promise<number> {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  try {
+    const rows = await pool.query<{ count: number }>(
+      `SELECT count(DISTINCT ra.account_id)::int AS count
+       FROM role_assignment ra
+       JOIN role_definition rd ON rd.id = ra.role_id
+       JOIN account a ON a.id = ra.account_id
+       WHERE ra.tenant_id = $1
+         AND rd.code = 'REGIONAL_ADMIN'
+         AND a.status = 'ACTIVE'
+         AND ra.scope_org_id = $2
+         AND ra.starts_at <= now()
+         AND (ra.ends_at IS NULL OR now() < ra.ends_at)
+         AND ra.revoked_at IS NULL`,
+      [tenantId, regionOrganizationId]
+    );
+    return rows.rows[0]?.count ?? 0;
   } finally {
     await pool.end();
   }
