@@ -42,6 +42,7 @@ import type {
   ProjectCommentRecord,
   ProjectReviewHistory,
   ReviewQueueCursor,
+  ReviewQueueItem,
   ReviewQueuePage
 } from "../ports/project-repository";
 
@@ -416,7 +417,10 @@ export class ProjectUseCases {
       body: input.body
     }));
     return this.repository.transaction(async (transaction) => {
-      const current = await transaction.findProjectById(input.tenantId, input.projectId);
+      // Comments follow the same Project -> ApprovalRequest lock order as
+      // transitions. Otherwise a resubmission can create a newer cycle while a
+      // comment is still being attached to the old CHANGES_REQUESTED request.
+      const current = await transaction.findProjectByIdForUpdate(input.tenantId, input.projectId);
       if (current === null) {
         throw new NotFoundError("Project not found.");
       }
@@ -424,11 +428,15 @@ export class ProjectUseCases {
       if (request === null || request.projectId !== input.projectId) {
         throw new NotFoundError("Review cycle not found.");
       }
+      const latestRequest = await transaction.findLatestApprovalRequestForProject(input.tenantId, input.projectId);
+      if (latestRequest === null || latestRequest.id !== request.id) {
+        throw new ValidationError("Review comments must target the current review cycle.", "PROJECT_COMMENT_REVIEW_CYCLE_INVALID", 409);
+      }
       if (!["READY_FOR_REVIEW", "IN_REVIEW", "CHANGES_REQUESTED"].includes(current.project.status)) {
         throw new ValidationError("Project cannot receive review comments in the current status.", "PROJECT_COMMENT_STATUS_INVALID", 422);
       }
-      // Comments are part of a review cycle. Once a project is resubmitted,
-      // new comments must attach to the new pending request, not an old closed one.
+      // A current cycle is identified by the highest submitted_project_version,
+      // not by status. Multiple historical cycles can be CHANGES_REQUESTED.
       if (
         ((current.project.status === "READY_FOR_REVIEW" || current.project.status === "IN_REVIEW") &&
           request.status !== "PENDING") ||
@@ -475,15 +483,22 @@ export class ProjectUseCases {
     if (scopePaths.length === 0) {
       return { items: [], nextCursor: null };
     }
-    return this.repository.transaction((transaction) =>
-      transaction.listReviewQueueForScopes({
+    return this.repository.transaction(async (transaction) => {
+      const page = await transaction.listReviewQueueForScopes({
         tenantId: input.tenantId,
         scopePaths,
         limit: input.limit,
         cursor: input.cursor,
-        status: input.status
-      })
-    );
+        status: input.status ?? "PENDING"
+      });
+      return {
+        ...page,
+        items: page.items.map((item) => ({
+          ...item,
+          capabilities: reviewQueueCapabilities(input.actor, item, this.clock.now())
+        }))
+      };
+    });
   }
 
   async getProjectReviewHistory(input: {
@@ -567,7 +582,7 @@ export class ProjectUseCases {
         expectedVersion: input.expectedVersion,
         toStatus,
         approvalRequestId: request.id,
-        reason: decision === "APPROVED" ? null : "See approval_decision.reason",
+        reason,
         requestId: input.requestId,
         auditAction,
         approvalDecisionId: approvalDecision.id
@@ -764,6 +779,40 @@ function resourceFromDetails(details: ProjectDetails): ProjectResource {
     ownerOrganizationPath: details.owner.path,
     status: details.project.status,
     createdByAccountId: details.project.createdByAccountId
+  };
+}
+
+function reviewQueueCapabilities(
+  actor: ActorContext,
+  item: ReviewQueueItem,
+  now: Date
+): NonNullable<ReviewQueueItem["capabilities"]> {
+  const resource: ProjectResource = {
+    projectId: item.projectId,
+    tenantId: item.tenantId,
+    ownerOrganizationId: item.ownerOrganization.id,
+    ownerOrganizationPath: item.ownerOrganization.path,
+    status: item.projectStatus,
+    createdByAccountId: item.createdByAccountId
+  };
+  const notSelfReview =
+    actor.account.id !== item.createdByAccountId &&
+    actor.account.id !== item.requestedByAccountId;
+  return {
+    canStartReview: item.projectStatus === "READY_FOR_REVIEW" &&
+      canAccessProject(actor, "project.review", resource, { now }).effect === "allow" &&
+      notSelfReview,
+    canComment: (item.projectStatus === "READY_FOR_REVIEW" || item.projectStatus === "IN_REVIEW") &&
+      canAccessProject(actor, "project.comment", resource, { now }).effect === "allow",
+    canRequestChanges: item.projectStatus === "IN_REVIEW" &&
+      canAccessProject(actor, "project.request_changes", resource, { now }).effect === "allow" &&
+      notSelfReview,
+    canApprove: item.projectStatus === "IN_REVIEW" &&
+      canAccessProject(actor, "project.approve", resource, { now }).effect === "allow" &&
+      notSelfReview,
+    canReject: item.projectStatus === "IN_REVIEW" &&
+      canAccessProject(actor, "project.reject", resource, { now }).effect === "allow" &&
+      notSelfReview
   };
 }
 

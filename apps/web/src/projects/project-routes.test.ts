@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ActorContext, ProjectDetails, ProjectUseCases } from "@scouthub/application";
-import { ConflictError, ValidationError } from "@scouthub/application";
+import { ConflictError, NotFoundError, ValidationError } from "@scouthub/application";
 import type { ProjectResponse } from "@scouthub/contracts";
 
 vi.mock("@/identity/http", () => ({
@@ -21,6 +21,10 @@ import {
 import { POST as SUBMIT_PROJECT } from "../../app/api/v1/projects/[id]/submit/route";
 import { POST as START_REVIEW } from "../../app/api/v1/projects/[id]/review/start/route";
 import { POST as REQUEST_CHANGES } from "../../app/api/v1/projects/[id]/review/request-changes/route";
+import { POST as APPROVE_PROJECT } from "../../app/api/v1/projects/[id]/review/approve/route";
+import { POST as REJECT_PROJECT } from "../../app/api/v1/projects/[id]/review/reject/route";
+import { POST as ADD_COMMENT } from "../../app/api/v1/projects/[id]/comments/route";
+import { GET as GET_REVIEW_HISTORY } from "../../app/api/v1/projects/[id]/reviews/route";
 import { GET as GET_REVIEWS } from "../../app/api/v1/reviews/route";
 
 const tenantId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
@@ -237,6 +241,169 @@ describe("project route handlers", () => {
 
     expect(response.status).toBe(400);
     expect((await problem(response)).request_id).toHaveLength(36);
+  });
+
+  it("handles approve and reject route outcomes", async () => {
+    mockActor();
+    mockUseCases({
+      approveProjectForExecution: vi.fn().mockResolvedValue(projectDetails({ status: "APPROVED_FOR_EXECUTION", version: 4 }))
+    });
+    const approved = await APPROVE_PROJECT(jsonRequest(`http://localhost/api/v1/projects/${projectId}/review/approve`, {
+      tenantId,
+      approvalRequestId: reviewRequestId,
+      expectedVersion: 3
+    }), params(projectId));
+    expect(approved.status).toBe(200);
+    expect((await approved.json() as { readonly data: ProjectResponse }).data.status).toBe("APPROVED_FOR_EXECUTION");
+
+    mockUseCases({
+      approveProjectForExecution: vi.fn().mockRejectedValue(new ConflictError("Project was modified by another request."))
+    });
+    const stale = await APPROVE_PROJECT(jsonRequest(`http://localhost/api/v1/projects/${projectId}/review/approve`, {
+      tenantId,
+      approvalRequestId: reviewRequestId,
+      expectedVersion: 2
+    }), params(projectId));
+    expect(stale.status).toBe(409);
+
+    mockUseCases({
+      approveProjectForExecution: vi.fn().mockRejectedValue(
+        new ValidationError("Permission denied.", "NO_MATCHING_ACTIVE_ASSIGNMENT", 403)
+      )
+    });
+    const denied = await APPROVE_PROJECT(jsonRequest(`http://localhost/api/v1/projects/${projectId}/review/approve`, {
+      tenantId,
+      approvalRequestId: reviewRequestId,
+      expectedVersion: 3
+    }), params(projectId));
+    expect(denied.status).toBe(403);
+
+    mockUseCases({});
+    const missingReason = await REJECT_PROJECT(jsonRequest(`http://localhost/api/v1/projects/${projectId}/review/reject`, {
+      tenantId,
+      approvalRequestId: reviewRequestId,
+      expectedVersion: 3
+    }), params(projectId));
+    expect(missingReason.status).toBe(400);
+
+    mockUseCases({
+      rejectProject: vi.fn().mockResolvedValue(projectDetails({ status: "REJECTED", version: 4 }))
+    });
+    const rejected = await REJECT_PROJECT(jsonRequest(`http://localhost/api/v1/projects/${projectId}/review/reject`, {
+      tenantId,
+      approvalRequestId: reviewRequestId,
+      expectedVersion: 3,
+      reason: "Projet hors cadre."
+    }), params(projectId));
+    expect(rejected.status).toBe(200);
+    expect((await rejected.json() as { readonly data: ProjectResponse }).data.status).toBe("REJECTED");
+  });
+
+  it("validates comment route contracts", async () => {
+    mockActor();
+    const addProjectComment = vi.fn().mockResolvedValue({
+      id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1",
+      tenantId,
+      projectId,
+      approvalRequestId: reviewRequestId,
+      authorAccountId: "cccccccc-cccc-4ccc-8ccc-ccccccccccc1",
+      kind: "GLOBAL",
+      fieldKey: null,
+      body: "Commentaire",
+      createdAt: now
+    });
+    mockUseCases({ addProjectComment });
+
+    const global = await ADD_COMMENT(jsonRequest(`http://localhost/api/v1/projects/${projectId}/comments`, {
+      tenantId,
+      approvalRequestId: reviewRequestId,
+      kind: "GLOBAL",
+      body: "Commentaire global"
+    }), params(projectId));
+    expect(global.status).toBe(201);
+
+    const field = await ADD_COMMENT(jsonRequest(`http://localhost/api/v1/projects/${projectId}/comments`, {
+      tenantId,
+      approvalRequestId: reviewRequestId,
+      kind: "FIELD",
+      fieldKey: "diagnostic",
+      body: "Commentaire champ"
+    }), params(projectId));
+    expect(field.status).toBe(201);
+
+    const invalidField = await ADD_COMMENT(jsonRequest(`http://localhost/api/v1/projects/${projectId}/comments`, {
+      tenantId,
+      approvalRequestId: reviewRequestId,
+      kind: "FIELD",
+      fieldKey: "secretColumn",
+      body: "Commentaire champ"
+    }), params(projectId));
+    expect(invalidField.status).toBe(400);
+
+    mockUseCases({
+      addProjectComment: vi.fn().mockRejectedValue(
+        new NotFoundError("Review cycle not found.")
+      )
+    });
+    const wrongRequest = await ADD_COMMENT(jsonRequest(`http://localhost/api/v1/projects/${projectId}/comments`, {
+      tenantId,
+      approvalRequestId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee9",
+      kind: "GLOBAL",
+      body: "Mauvais cycle"
+    }), params(projectId));
+    expect(wrongRequest.status).toBe(404);
+  });
+
+  it("returns review history with no-store and request_id", async () => {
+    mockActor();
+    mockUseCases({
+      getProjectReviewHistory: vi.fn().mockResolvedValue({
+        requests: [approvalRequest()],
+        decisions: [],
+        comments: [],
+        transitions: []
+      })
+    });
+
+    const response = await GET_REVIEW_HISTORY(
+      new Request(`http://localhost/api/v1/projects/${projectId}/reviews?tenantId=${tenantId}`),
+      params(projectId)
+    );
+    const body = await response.json() as {
+      readonly data: { readonly cycles: readonly unknown[] };
+      readonly request_id: string;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.data.cycles).toHaveLength(1);
+    expect(body.request_id).toHaveLength(36);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+
+    mockUseCases({
+      getProjectReviewHistory: vi.fn().mockRejectedValue(
+        new ValidationError("Permission denied.", "NO_MATCHING_ACTIVE_ASSIGNMENT", 403)
+      )
+    });
+    const denied = await GET_REVIEW_HISTORY(
+      new Request(`http://localhost/api/v1/projects/${projectId}/reviews?tenantId=${tenantId}`),
+      params(projectId)
+    );
+    expect(denied.status).toBe(403);
+  });
+
+  it("defaults the review queue to active pending requests at the HTTP boundary", async () => {
+    mockActor();
+    const listRegionalReviewQueue = vi.fn().mockResolvedValue({ items: [], nextCursor: null });
+    mockUseCases({ listRegionalReviewQueue });
+
+    const response = await GET_REVIEWS(new Request(`http://localhost/api/v1/reviews?tenantId=${tenantId}`));
+
+    expect(response.status).toBe(200);
+    expect(listRegionalReviewQueue).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId,
+      status: "PENDING"
+    }));
+    expect(response.headers.get("cache-control")).toBe("no-store");
   });
 
   it("rejects invalid review queue cursors", async () => {

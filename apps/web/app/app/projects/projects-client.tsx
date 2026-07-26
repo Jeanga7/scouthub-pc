@@ -405,7 +405,7 @@ export function ReviewsQueueClient() {
         return;
       }
       setTenantId(assignment.tenantId);
-      const params = new URLSearchParams({ tenantId: assignment.tenantId, limit: "20" });
+      const params = new URLSearchParams({ tenantId: assignment.tenantId, limit: "20", status: "PENDING" });
       if (cursor !== undefined) {
         params.set("cursor", cursor);
       }
@@ -438,6 +438,12 @@ export function ReviewsQueueClient() {
   }
 
   async function decide(item: ReviewQueueResponse["items"][number], action: "approve" | "request-changes" | "reject", formData: FormData) {
+    if (
+      (action === "approve" && !window.confirm("Confirmer l'approbation pour execution ?")) ||
+      (action === "reject" && !window.confirm("Confirmer le rejet du projet ?"))
+    ) {
+      return;
+    }
     setMessage("Decision en cours...");
     try {
       await postJson<ProjectResponse>(`/api/v1/projects/${item.projectId}/review/${action}`, {
@@ -485,11 +491,12 @@ export function ReviewsQueueClient() {
               <div><dt>Statut</dt><dd>{item.projectStatus}</dd></div>
               <div><dt>Soumis le</dt><dd>{item.requestedAt}</dd></div>
             </dl>
-            {item.projectStatus === "READY_FOR_REVIEW" ? (
+            {item.capabilities?.canStartReview === true ? (
               <button type="button" onClick={() => { void startReview(item); }}>Commencer la revue</button>
             ) : null}
             {item.projectStatus === "IN_REVIEW" ? (
               <>
+                {item.capabilities?.canComment === true ? (
                 <form className="project-form" action={(data) => comment(item, data)}>
                   <label htmlFor={`kind-${item.approvalRequestId}`}>Type de commentaire</label>
                   <select id={`kind-${item.approvalRequestId}`} name="kind">
@@ -507,21 +514,28 @@ export function ReviewsQueueClient() {
                   <textarea id={`comment-${item.approvalRequestId}`} name="body" required maxLength={4000} />
                   <button type="submit">Ajouter le commentaire</button>
                 </form>
+                ) : null}
+                {item.capabilities?.canRequestChanges === true ? (
                 <form className="project-form" action={(data) => decide(item, "request-changes", data)}>
                   <label htmlFor={`changes-${item.approvalRequestId}`}>Motif des corrections</label>
                   <textarea id={`changes-${item.approvalRequestId}`} name="reason" required maxLength={4000} />
                   <button type="submit">Demander modifications</button>
                 </form>
+                ) : null}
+                {item.capabilities?.canApprove === true ? (
                 <form className="project-form" action={(data) => decide(item, "approve", data)}>
                   <label htmlFor={`approve-${item.approvalRequestId}`}>Note optionnelle</label>
                   <textarea id={`approve-${item.approvalRequestId}`} name="reason" maxLength={4000} />
                   <button type="submit">Approuver pour execution</button>
                 </form>
+                ) : null}
+                {item.capabilities?.canReject === true ? (
                 <form className="project-form" action={(data) => decide(item, "reject", data)}>
                   <label htmlFor={`reject-${item.approvalRequestId}`}>Motif du rejet</label>
                   <textarea id={`reject-${item.approvalRequestId}`} name="reason" required maxLength={4000} />
                   <button type="submit">Rejeter</button>
                 </form>
+                ) : null}
               </>
             ) : null}
           </article>

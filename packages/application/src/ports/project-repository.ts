@@ -139,6 +139,7 @@ export interface ReviewQueueCursor {
 }
 
 export interface ReviewQueueItem {
+  readonly tenantId: string;
   readonly approvalRequestId: string;
   readonly projectId: string;
   readonly code: string;
@@ -147,13 +148,22 @@ export interface ReviewQueueItem {
     readonly id: string;
     readonly name: string;
     readonly type: "GROUP" | "UNIT";
+    readonly path: string;
   };
   readonly projectStatus: ProjectStatus;
   readonly projectVersion: number;
+  readonly createdByAccountId: string;
   readonly requestedAt: Date;
   readonly requestedByAccountId: string;
   readonly submittedProjectVersion: number;
   readonly isResubmission: boolean;
+  readonly capabilities?: {
+    readonly canStartReview: boolean;
+    readonly canComment: boolean;
+    readonly canRequestChanges: boolean;
+    readonly canApprove: boolean;
+    readonly canReject: boolean;
+  };
 }
 
 export interface ReviewQueuePage {
@@ -182,6 +192,10 @@ export interface ProjectTransaction {
   findApprovalRequestByIdForUpdate(
     tenantId: string,
     approvalRequestId: string
+  ): Promise<ApprovalRequestRecord | null>;
+  findLatestApprovalRequestForProject(
+    tenantId: string,
+    projectId: string
   ): Promise<ApprovalRequestRecord | null>;
   listProjectsForScopes(input: {
     readonly tenantId: string;

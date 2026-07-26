@@ -137,6 +137,7 @@ type ProjectCommentRow = QueryResultRow & {
 };
 
 type ReviewQueueRow = QueryResultRow & {
+  tenant_id: string;
   approval_request_id: string;
   project_id: string;
   code: string;
@@ -144,8 +145,10 @@ type ReviewQueueRow = QueryResultRow & {
   owner_org_id: string;
   owner_name: string;
   owner_type: "GROUP" | "UNIT";
+  owner_path: string;
   project_status: ProjectStatus;
   project_version: number;
+  created_by_account_id: string;
   requested_at: Date;
   requested_by_account_id: string;
   submitted_project_version: number;
@@ -576,6 +579,22 @@ class PgProjectTransaction implements ProjectTransaction {
     return mapProjectComment(requireReturnedRow(result.rows[0], "Expected created project comment."));
   }
 
+  async findLatestApprovalRequestForProject(
+    tenantId: string,
+    projectId: string
+  ): Promise<ApprovalRequestRecord | null> {
+    const result = await this.db.query<ApprovalRequestRow>(
+      `SELECT id, tenant_id, resource_id, status, submitted_project_version,
+              requested_by_account_id, requested_at, resolved_at
+       FROM approval_request
+       WHERE tenant_id = $1 AND resource_id = $2
+       ORDER BY submitted_project_version DESC, id DESC
+       LIMIT 1`,
+      [tenantId, projectId]
+    );
+    return result.rows[0] === undefined ? null : mapApprovalRequest(result.rows[0]);
+  }
+
   async listReviewQueueForScopes(input: {
     readonly tenantId: string;
     readonly scopePaths: readonly string[];
@@ -600,14 +619,17 @@ class PgProjectTransaction implements ProjectTransaction {
     const result = await this.db.query<ReviewQueueRow>(
       `SELECT
          ar.id AS approval_request_id,
+         ar.tenant_id,
          p.id AS project_id,
          p.code,
          p.title,
          o.id AS owner_org_id,
          o.name AS owner_name,
          o.type AS owner_type,
+         o.path AS owner_path,
          p.status AS project_status,
          p.version AS project_version,
+         p.created_by_account_id,
          ar.requested_at,
          ar.requested_by_account_id,
          ar.submitted_project_version,
@@ -889,6 +911,7 @@ function mapProjectComment(row: ProjectCommentRow): ProjectCommentRecord {
 
 function mapReviewQueueItem(row: ReviewQueueRow): ReviewQueuePage["items"][number] {
   return {
+    tenantId: row.tenant_id,
     approvalRequestId: row.approval_request_id,
     projectId: row.project_id,
     code: row.code,
@@ -896,10 +919,12 @@ function mapReviewQueueItem(row: ReviewQueueRow): ReviewQueuePage["items"][numbe
     ownerOrganization: {
       id: row.owner_org_id,
       name: row.owner_name,
-      type: row.owner_type
+      type: row.owner_type,
+      path: row.owner_path
     },
     projectStatus: row.project_status,
     projectVersion: row.project_version,
+    createdByAccountId: row.created_by_account_id,
     requestedAt: row.requested_at,
     requestedByAccountId: row.requested_by_account_id,
     submittedProjectVersion: row.submitted_project_version,

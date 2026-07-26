@@ -321,12 +321,74 @@ describe("PgProjectRepository", () => {
       approvalRequestId: resubmitted.approvalRequest.id,
       expectedVersion: resubmitted.project.project.version
     });
-    const approved = await useCases.approveProjectForExecution({
+    const secondChanges = await useCases.requestProjectChanges({
       actor: reviewer,
       tenantId: ids.tenant,
       projectId: ids.project,
       approvalRequestId: resubmitted.approvalRequest.id,
-      expectedVersion: secondReview.project.version
+      expectedVersion: secondReview.project.version,
+      reason: "Deuxieme cycle a completer."
+    });
+    expect(secondChanges.project.status).toBe("CHANGES_REQUESTED");
+    await expect(useCases.addProjectComment({
+      actor: reviewer,
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      approvalRequestId: submitted.approvalRequest.id,
+      kind: "GLOBAL",
+      body: "Ancien cycle ferme."
+    })).rejects.toMatchObject({ code: "PROJECT_COMMENT_REVIEW_CYCLE_INVALID", status: 409 });
+    const currentCycleComment = await useCases.addProjectComment({
+      actor: reviewer,
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      approvalRequestId: resubmitted.approvalRequest.id,
+      kind: "GLOBAL",
+      body: "Commentaire sur le cycle courant."
+    });
+    expect(currentCycleComment.approvalRequestId).toBe(resubmitted.approvalRequest.id);
+
+    const activeQueue = await useCases.listRegionalReviewQueue({
+      actor: reviewer,
+      tenantId: ids.tenant,
+      limit: 10,
+      cursor: null
+    });
+    expect(activeQueue.items).toHaveLength(0);
+
+    const secondEdit = await useCases.updateProjectDraft({
+      actor: owner,
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      expectedVersion: secondChanges.project.version,
+      problemStatement: "Probleme clarifie apres deuxieme retour."
+    });
+    const thirdSubmit = await useCases.submitProjectForReview({
+      actor: owner,
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      expectedVersion: secondEdit.project.version
+    });
+    const pendingQueue = await useCases.listRegionalReviewQueue({
+      actor: reviewer,
+      tenantId: ids.tenant,
+      limit: 10,
+      cursor: null
+    });
+    expect(pendingQueue.items.map((item) => item.approvalRequestId)).toEqual([thirdSubmit.approvalRequest.id]);
+    const thirdReview = await useCases.startProjectReview({
+      actor: reviewer,
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      approvalRequestId: thirdSubmit.approvalRequest.id,
+      expectedVersion: thirdSubmit.project.project.version
+    });
+    const approved = await useCases.approveProjectForExecution({
+      actor: reviewer,
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      approvalRequestId: thirdSubmit.approvalRequest.id,
+      expectedVersion: thirdReview.project.version
     });
     expect(approved.project.status).toBe("APPROVED_FOR_EXECUTION");
 
@@ -335,11 +397,14 @@ describe("PgProjectRepository", () => {
       tenantId: ids.tenant,
       projectId: ids.project
     });
-    expect(history.requests).toHaveLength(2);
-    expect(history.decisions.map((decision) => decision.decision)).toEqual(["CHANGES_REQUESTED", "APPROVED"]);
-    expect(history.comments).toHaveLength(1);
+    expect(history.requests).toHaveLength(3);
+    expect(history.decisions.map((decision) => decision.decision)).toEqual(["CHANGES_REQUESTED", "CHANGES_REQUESTED", "APPROVED"]);
+    expect(history.comments).toHaveLength(2);
     expect(history.transitions.map((transition) => `${transition.fromState}->${transition.toState}`)).toEqual([
       "DRAFT->READY_FOR_REVIEW",
+      "READY_FOR_REVIEW->IN_REVIEW",
+      "IN_REVIEW->CHANGES_REQUESTED",
+      "CHANGES_REQUESTED->READY_FOR_REVIEW",
       "READY_FOR_REVIEW->IN_REVIEW",
       "IN_REVIEW->CHANGES_REQUESTED",
       "CHANGES_REQUESTED->READY_FOR_REVIEW",
@@ -350,18 +415,344 @@ describe("PgProjectRepository", () => {
     const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
     try {
       await expect(pool.query("UPDATE approval_decision SET reason = 'changed'")).rejects.toThrow();
+      await expect(pool.query("DELETE FROM approval_decision")).rejects.toThrow();
+      await expect(pool.query("UPDATE state_transition SET reason = 'changed'")).rejects.toThrow();
       await expect(pool.query("DELETE FROM state_transition")).rejects.toThrow();
       await expect(pool.query("UPDATE project_comment SET body = 'changed'")).rejects.toThrow();
+      await expect(pool.query("DELETE FROM project_comment")).rejects.toThrow();
+      const reasons = await pool.query<{ decision_reason: string | null; transition_reason: string | null }>(
+        `SELECT d.reason AS decision_reason, st.reason AS transition_reason
+         FROM approval_decision d
+         JOIN state_transition st ON st.approval_request_id = d.request_id AND st.to_state = 'CHANGES_REQUESTED'
+         WHERE d.decision = 'CHANGES_REQUESTED'
+         ORDER BY d.decided_at
+         LIMIT 1`
+      );
+      expect(reasons.rows[0]?.decision_reason).toBe("Diagnostic a completer.");
+      expect(reasons.rows[0]?.transition_reason).toBe("Diagnostic a completer.");
       const audit = await pool.query<{ action: string; actor_kind: string; metadata: Record<string, unknown> }>(
         "SELECT action, actor_kind, metadata FROM audit_event WHERE resource_type = 'project' ORDER BY occurred_at"
       );
       expect(audit.rows.map((row) => row.action)).toContain("project.approved_for_execution");
       expect(audit.rows.every((row) => row.actor_kind === "USER")).toBe(true);
       expect(JSON.stringify(audit.rows.map((row) => row.metadata))).not.toContain("Diagnostic a completer");
+      expect(JSON.stringify(audit.rows.map((row) => row.metadata))).not.toContain("Deuxieme cycle");
       expect(JSON.stringify(audit.rows.map((row) => row.metadata))).not.toContain("Preciser la methode");
     } finally {
       await pool.end();
     }
+  });
+
+  it("denies self-review for creators and submitters even when they also hold reviewer permission", async () => {
+    const creatorReviewer = ownerAndReviewerActor();
+    const useCases = createUseCases([ids.project]);
+    const created = await useCases.createProjectDraft({
+      actor: creatorReviewer,
+      tenantId: ids.tenant,
+      ownerOrganizationId: ids.groupA,
+      title: "Jardin communautaire",
+      problemStatement: "Le quartier manque d'espaces verts.",
+      diagnostic: "Diagnostic local."
+    });
+    const submitted = await useCases.submitProjectForReview({
+      actor: creatorReviewer,
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      expectedVersion: created.project.version
+    });
+
+    await expect(useCases.startProjectReview({
+      actor: creatorReviewer,
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      approvalRequestId: submitted.approvalRequest.id,
+      expectedVersion: submitted.project.project.version
+    })).rejects.toMatchObject({ code: "PROJECT_SELF_REVIEW_FORBIDDEN", status: 403 });
+
+    const submitterReviewer = ownerAndReviewerActor({ accountId: ids.reviewerAccount, personId: ids.reviewerPerson });
+    const createdByA = await useCases.createProjectDraft({
+      actor: projectOwnerActor(),
+      tenantId: ids.tenant,
+      ownerOrganizationId: ids.groupA,
+      title: "Bibliotheque mobile",
+      problemStatement: "Besoin de livres.",
+      diagnostic: "Diagnostic lecture."
+    });
+    const submittedByB = await useCases.submitProjectForReview({
+      actor: submitterReviewer,
+      tenantId: ids.tenant,
+      projectId: createdByA.project.id,
+      expectedVersion: createdByA.project.version
+    });
+
+    await expect(useCases.startProjectReview({
+      actor: submitterReviewer,
+      tenantId: ids.tenant,
+      projectId: createdByA.project.id,
+      approvalRequestId: submittedByB.approvalRequest.id,
+      expectedVersion: submittedByB.project.project.version
+    })).rejects.toMatchObject({ code: "PROJECT_SELF_REVIEW_FORBIDDEN", status: 403 });
+  });
+
+  it("keeps double submit and double decision transitions conflict-safe", async () => {
+    const useCases = createUseCases([ids.project]);
+    const owner = projectOwnerActor();
+    const reviewer = regionalReviewerActor();
+    const created = await useCases.createProjectDraft({
+      actor: owner,
+      tenantId: ids.tenant,
+      ownerOrganizationId: ids.groupA,
+      title: "Nettoyage plage",
+      problemStatement: "Dechets sur la plage.",
+      diagnostic: "Diagnostic environnemental."
+    });
+
+    const submitResults = await Promise.allSettled([
+      useCases.submitProjectForReview({
+        actor: owner,
+        tenantId: ids.tenant,
+        projectId: ids.project,
+        expectedVersion: created.project.version,
+        requestId: "submit_a"
+      }),
+      useCases.submitProjectForReview({
+        actor: owner,
+        tenantId: ids.tenant,
+        projectId: ids.project,
+        expectedVersion: created.project.version,
+        requestId: "submit_b"
+      })
+    ]);
+    expect(submitResults.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(submitResults.filter((result) => result.status === "rejected")).toHaveLength(1);
+    const submitted = submitResults.find((result) => result.status === "fulfilled");
+    if (submitted?.status !== "fulfilled") {
+      throw new Error("Expected one successful submission.");
+    }
+
+    const inReview = await useCases.startProjectReview({
+      actor: reviewer,
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      approvalRequestId: submitted.value.approvalRequest.id,
+      expectedVersion: submitted.value.project.project.version
+    });
+    const decisionResults = await Promise.allSettled([
+      useCases.approveProjectForExecution({
+        actor: reviewer,
+        tenantId: ids.tenant,
+        projectId: ids.project,
+        approvalRequestId: submitted.value.approvalRequest.id,
+        expectedVersion: inReview.project.version
+      }),
+      useCases.requestProjectChanges({
+        actor: reviewer,
+        tenantId: ids.tenant,
+        projectId: ids.project,
+        approvalRequestId: submitted.value.approvalRequest.id,
+        expectedVersion: inReview.project.version,
+        reason: "Correction concurrente."
+      })
+    ]);
+    expect(decisionResults.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(decisionResults.filter((result) => result.status === "rejected")).toHaveLength(1);
+
+    const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+    try {
+      const counts = await pool.query<{ requests: string; submitted_audits: string; submit_transitions: string; decisions: string; terminal_transitions: string }>(
+        `SELECT
+          (SELECT count(*) FROM approval_request WHERE resource_id = $1) AS requests,
+          (SELECT count(*) FROM audit_event WHERE resource_id = $1 AND action = 'project.submitted_for_review') AS submitted_audits,
+          (SELECT count(*) FROM state_transition WHERE entity_id = $1 AND from_state = 'DRAFT' AND to_state = 'READY_FOR_REVIEW') AS submit_transitions,
+          (SELECT count(*) FROM approval_decision WHERE request_id = $2) AS decisions,
+          (SELECT count(*) FROM state_transition WHERE entity_id = $1 AND to_state IN ('APPROVED_FOR_EXECUTION', 'CHANGES_REQUESTED')) AS terminal_transitions`,
+        [ids.project, submitted.value.approvalRequest.id]
+      );
+      expect(counts.rows[0]).toEqual({
+        requests: "1",
+        submitted_audits: "1",
+        submit_transitions: "1",
+        decisions: "1",
+        terminal_transitions: "1"
+      });
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it("serializes comments against resubmission of the same review cycle", async () => {
+    const useCases = createUseCases([ids.project]);
+    const owner = projectOwnerActor();
+    const reviewer = regionalReviewerActor();
+    const created = await useCases.createProjectDraft({
+      actor: owner,
+      tenantId: ids.tenant,
+      ownerOrganizationId: ids.groupA,
+      title: "Jardin communautaire",
+      problemStatement: "Probleme initial.",
+      diagnostic: "Diagnostic initial."
+    });
+    const submitted = await useCases.submitProjectForReview({
+      actor: owner,
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      expectedVersion: created.project.version
+    });
+    const inReview = await useCases.startProjectReview({
+      actor: reviewer,
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      approvalRequestId: submitted.approvalRequest.id,
+      expectedVersion: submitted.project.project.version
+    });
+    const changes = await useCases.requestProjectChanges({
+      actor: reviewer,
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      approvalRequestId: submitted.approvalRequest.id,
+      expectedVersion: inReview.project.version,
+      reason: "A clarifier."
+    });
+    const edited = await useCases.updateProjectDraft({
+      actor: owner,
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      expectedVersion: changes.project.version,
+      diagnostic: "Diagnostic clarifie."
+    });
+
+    const results = await Promise.allSettled([
+      useCases.addProjectComment({
+        actor: reviewer,
+        tenantId: ids.tenant,
+        projectId: ids.project,
+        approvalRequestId: submitted.approvalRequest.id,
+        kind: "GLOBAL",
+        body: "Commentaire potentiellement concurrent."
+      }),
+      useCases.submitProjectForReview({
+        actor: owner,
+        tenantId: ids.tenant,
+        projectId: ids.project,
+        expectedVersion: edited.project.version
+      })
+    ]);
+
+    const submitResult = results[1];
+    expect(submitResult.status).toBe("fulfilled");
+    const commentResult = results[0];
+    if (commentResult.status === "rejected") {
+      expect(commentResult.reason).toMatchObject({
+        code: "PROJECT_COMMENT_REVIEW_CYCLE_INVALID",
+        status: 409
+      });
+    }
+
+    const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+    try {
+      const rows = await pool.query<{ request_id: string; comments: string }>(
+        `SELECT ar.id AS request_id, count(pc.id) AS comments
+         FROM approval_request ar
+         LEFT JOIN project_comment pc ON pc.approval_request_id = ar.id
+         WHERE ar.resource_id = $1
+         GROUP BY ar.id, ar.submitted_project_version
+         ORDER BY ar.submitted_project_version`,
+        [ids.project]
+      );
+      expect(rows.rows).toHaveLength(2);
+      expect(Number(rows.rows[0]?.comments ?? 0)).toBeLessThanOrEqual(1);
+      expect(rows.rows[1]?.request_id).not.toBe(submitted.approvalRequest.id);
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it("filters the regional review queue by pending status, region scope and tenant", async () => {
+    const regionASecondProject = "abababab-abab-4aba-8aba-abababababab";
+    const tenantBProject = "babababa-baba-4bab-8bab-babababababa";
+    const useCases = createUseCases([
+      ids.project,
+      "11111111-1111-4111-8111-111111111111",
+      regionASecondProject,
+      "22222222-2222-4222-8222-222222222222",
+      tenantBProject,
+      "33333333-3333-4333-8333-333333333333"
+    ]);
+    const owner = projectOwnerActor();
+    const reviewer = regionalReviewerActor();
+    const first = await useCases.createProjectDraft({
+      actor: owner,
+      tenantId: ids.tenant,
+      ownerOrganizationId: ids.groupA,
+      title: "Projet Region A",
+      problemStatement: "Probleme A.",
+      diagnostic: "Diagnostic A."
+    });
+    const second = await useCases.createProjectDraft({
+      actor: groupBSubmitterActor(),
+      tenantId: ids.tenant,
+      ownerOrganizationId: ids.groupB,
+      title: "Projet Region A bis",
+      problemStatement: "Probleme B.",
+      diagnostic: "Diagnostic B."
+    });
+    const tenantB = await useCases.createProjectDraft({
+      actor: tenantBSubmitterActor(),
+      tenantId: ids.tenantB,
+      ownerOrganizationId: ids.groupTenantB,
+      title: "Projet Tenant B",
+      problemStatement: "Probleme Beta.",
+      diagnostic: "Diagnostic Beta."
+    });
+    const firstRequest = await useCases.submitProjectForReview({
+      actor: owner,
+      tenantId: ids.tenant,
+      projectId: first.project.id,
+      expectedVersion: first.project.version
+    });
+    await useCases.submitProjectForReview({
+      actor: groupBSubmitterActor(),
+      tenantId: ids.tenant,
+      projectId: second.project.id,
+      expectedVersion: second.project.version
+    });
+    await useCases.submitProjectForReview({
+      actor: tenantBSubmitterActor(),
+      tenantId: ids.tenantB,
+      projectId: tenantB.project.id,
+      expectedVersion: tenantB.project.version
+    });
+    const queue = await useCases.listRegionalReviewQueue({
+      actor: reviewer,
+      tenantId: ids.tenant,
+      limit: 10,
+      cursor: null
+    });
+    expect(queue.items.map((item) => item.projectId).sort()).toEqual([ids.project, regionASecondProject].sort());
+    expect(queue.items.every((item) => item.tenantId === ids.tenant)).toBe(true);
+
+    const started = await useCases.startProjectReview({
+      actor: reviewer,
+      tenantId: ids.tenant,
+      projectId: first.project.id,
+      approvalRequestId: firstRequest.approvalRequest.id,
+      expectedVersion: firstRequest.project.project.version
+    });
+    await useCases.requestProjectChanges({
+      actor: reviewer,
+      tenantId: ids.tenant,
+      projectId: first.project.id,
+      approvalRequestId: firstRequest.approvalRequest.id,
+      expectedVersion: started.project.version,
+      reason: "Completer."
+    });
+    const pendingOnly = await useCases.listRegionalReviewQueue({
+      actor: reviewer,
+      tenantId: ids.tenant,
+      limit: 10,
+      cursor: null
+    });
+    expect(pendingOnly.items.map((item) => item.projectId)).toEqual([regionASecondProject]);
   });
 });
 
@@ -461,10 +852,58 @@ function projectOwnerActor(): ActorContext {
   });
 }
 
+function ownerAndReviewerActor(input: {
+  readonly accountId?: string;
+  readonly personId?: string;
+} = {}): ActorContext {
+  const owner = projectOwnerActor();
+  const reviewer = regionalReviewerActor();
+  const ownerAssignment = owner.assignments[0];
+  const reviewerAssignment = reviewer.assignments[0];
+  if (ownerAssignment === undefined || reviewerAssignment === undefined) {
+    throw new Error("Expected owner and reviewer assignments.");
+  }
+  const accountId = input.accountId ?? ids.account;
+  const personId = input.personId ?? ids.person;
+  return {
+    ...owner,
+    account: {
+      ...owner.account,
+      id: accountId
+    },
+    person: owner.person === null ? null : {
+      ...owner.person,
+      id: personId
+    },
+    assignments: [
+      {
+        ...ownerAssignment,
+        id: "ffffffff-ffff-4fff-8fff-ffffffffffa1",
+        accountId
+      },
+      {
+        ...reviewerAssignment,
+        id: "ffffffff-ffff-4fff-8fff-ffffffffffa2",
+        accountId
+      }
+    ]
+  };
+}
+
 function groupBAdminActor(): ActorContext {
   return actor({
     roleCode: "GROUP_ADMIN",
     permissions: ["project.create", "project.read", "project.update"],
+    scopeOrgId: ids.groupB,
+    scopePath: `/${ids.tenant}/${ids.region}/${ids.groupB}/`,
+    scopeType: "GROUP"
+  });
+}
+
+function groupBSubmitterActor(): ActorContext {
+  return actor({
+    roleCode: "GROUP_ADMIN",
+    permissions: ["project.create", "project.read", "project.update", "project.submit", "project.comment"],
     scopeOrgId: ids.groupB,
     scopePath: `/${ids.tenant}/${ids.region}/${ids.groupB}/`,
     scopeType: "GROUP"
@@ -504,6 +943,18 @@ function tenantBGroupAdminActor(): ActorContext {
   return actor({
     roleCode: "GROUP_ADMIN",
     permissions: ["project.create", "project.read", "project.update"],
+    scopeOrgId: ids.groupTenantB,
+    scopePath: `/${ids.tenantB}/${ids.regionB}/${ids.groupTenantB}/`,
+    scopeType: "GROUP",
+    tenantId: ids.tenantB,
+    personId: ids.personTenantB
+  });
+}
+
+function tenantBSubmitterActor(): ActorContext {
+  return actor({
+    roleCode: "GROUP_ADMIN",
+    permissions: ["project.create", "project.read", "project.update", "project.submit", "project.comment"],
     scopeOrgId: ids.groupTenantB,
     scopePath: `/${ids.tenantB}/${ids.regionB}/${ids.groupTenantB}/`,
     scopeType: "GROUP",

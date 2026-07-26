@@ -311,6 +311,7 @@ export function mapReviewQueue(input: {
 }): ReviewQueueResponse {
   return reviewQueueResponseSchema.parse({
     items: input.page.items.map((item) => ({
+      tenantId: item.tenantId,
       approvalRequestId: item.approvalRequestId,
       projectId: item.projectId,
       code: item.code,
@@ -321,7 +322,8 @@ export function mapReviewQueue(input: {
       requestedAt: item.requestedAt.toISOString(),
       requestedBy: { accountId: item.requestedByAccountId },
       submittedProjectVersion: item.submittedProjectVersion,
-      isResubmission: item.isResubmission
+      isResubmission: item.isResubmission,
+      ...(item.capabilities !== undefined && { capabilities: item.capabilities })
     })),
     nextCursor: input.nextCursor
   });

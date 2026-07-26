@@ -451,6 +451,7 @@ export const listReviewsQuerySchema = z.object({
 });
 
 export const reviewQueueItemSchema = z.object({
+  tenantId: uuidSchema,
   approvalRequestId: uuidSchema,
   projectId: uuidSchema,
   code: z.string(),
@@ -467,7 +468,14 @@ export const reviewQueueItemSchema = z.object({
     accountId: uuidSchema
   }),
   submittedProjectVersion: z.number().int().positive(),
-  isResubmission: z.boolean()
+  isResubmission: z.boolean(),
+  capabilities: z.object({
+    canStartReview: z.boolean(),
+    canComment: z.boolean(),
+    canRequestChanges: z.boolean(),
+    canApprove: z.boolean(),
+    canReject: z.boolean()
+  }).optional()
 });
 
 export const reviewQueueResponseSchema = z.object({

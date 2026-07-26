@@ -23,7 +23,7 @@ export async function GET(request: Request) {
       tenantId: query.tenantId,
       limit: query.limit ?? 20,
       cursor: decodeReviewCursor(query.cursor),
-      status: query.status
+      status: query.status ?? "PENDING"
     });
     return jsonResponse(mapReviewQueue({
       page,
