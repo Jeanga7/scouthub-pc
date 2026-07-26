@@ -24,7 +24,10 @@ export type PermissionCode =
   | "role.revoke"
   | "account.read"
   | "account.suspend"
-  | "audit.read";
+  | "audit.read"
+  | "project.create"
+  | "project.read"
+  | "project.update";
 
 export type RoleScopeType =
   | "OWN"
@@ -131,4 +134,3 @@ export function isSlice2GrantableRole(roleCode: RoleCode): boolean {
   return getSlice2RoleScopeRule(roleCode)?.grantableByRegionalAdmin ?? false;
 }
 import type { OrganizationType } from "../organization/organization-type";
-

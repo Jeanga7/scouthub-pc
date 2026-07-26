@@ -27,6 +27,15 @@ export interface OrganizationResource {
   readonly type?: OrganizationType;
 }
 
+export interface ProjectResource {
+  readonly projectId: string;
+  readonly tenantId: string;
+  readonly ownerOrganizationId: string;
+  readonly ownerOrganizationPath: string;
+  readonly status: string;
+  readonly createdByAccountId: string;
+}
+
 export interface PolicyContext {
   readonly now: Date;
 }
@@ -102,6 +111,47 @@ export function canAccessScopedAction(
 
   return deny("NO_MATCHING_ACTIVE_ASSIGNMENT");
 }
+
+export function canAccessProject(
+  actor: Actor,
+  action: Extract<PermissionCode, `project.${string}`>,
+  resource: ProjectResource,
+  context: PolicyContext
+): AuthorizationDecision {
+  if (actor.account.status !== "ACTIVE") {
+    return deny(actor.account.status === "SUSPENDED" ? "ACCOUNT_SUSPENDED" : "ACCOUNT_NOT_ACTIVE");
+  }
+
+  const scopedOwner: OrganizationResource = {
+    tenantId: resource.tenantId,
+    organizationId: resource.ownerOrganizationId,
+    path: resource.ownerOrganizationPath
+  };
+
+  for (const assignment of actor.assignments) {
+    if (!isRoleAssignmentActive(assignment, context.now)) {
+      continue;
+    }
+    if (assignment.tenantId !== resource.tenantId) {
+      continue;
+    }
+    if (assignment.roleCode === "PLATFORM_ADMIN") {
+      continue;
+    }
+    if (!assignment.permissions.includes(action)) {
+      continue;
+    }
+    // Project access inherits the owner Organization path. Permission and
+    // coverage must come from this single assignment, preserving the Slice 2
+    // same-assignment invariant for project data.
+    if (isResourceInScope(assignment, scopedOwner)) {
+      return allow("PROJECT_OWNER_SCOPE_MATCH");
+    }
+  }
+
+  return deny("NO_MATCHING_ACTIVE_ASSIGNMENT");
+}
+
 
 export function validateSlice2RoleScope(input: {
   readonly roleCode: RoleAssignment["roleCode"];

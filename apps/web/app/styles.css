@@ -137,3 +137,66 @@ button {
 .org-inline {
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
 }
+
+.project-console,
+.project-form,
+.project-list,
+.project-card {
+  display: grid;
+  gap: 18px;
+}
+
+.project-header {
+  align-items: start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.button-link {
+  align-self: start;
+  background: var(--accent);
+  border-radius: 6px;
+  color: #fff;
+  display: inline-block;
+  font-weight: 700;
+  padding: 10px 12px;
+  text-decoration: none;
+}
+
+.project-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 18px;
+}
+
+.project-card h2 {
+  font-size: 1.25rem;
+  margin: 0;
+}
+
+.project-card dl {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  margin: 0;
+}
+
+.project-card dt {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.project-card dd {
+  margin: 0;
+}
+
+textarea {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  min-height: 96px;
+  padding: 10px 12px;
+}

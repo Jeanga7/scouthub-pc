@@ -13,3 +13,4 @@ export {
 export type { DatabaseConnection } from "./database/connection";
 export { createPgOrganizationRepository } from "./database/organization-repository";
 export { createPgIdentityRepository } from "./database/identity-repository";
+export { createPgProjectRepository } from "./database/project-repository";

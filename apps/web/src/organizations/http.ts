@@ -103,6 +103,7 @@ export function jsonResponse(data: unknown, request_id: string, init?: ResponseI
     {
       ...init,
       headers: {
+        "cache-control": "no-store",
         ...etagFor(data),
         ...init?.headers
       }

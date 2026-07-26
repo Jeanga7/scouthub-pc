@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Account, PermissionCode, RoleCode } from "@scouthub/domain";
 import {
   canAccessOrganization,
+  canAccessProject,
   canAccessScopedAction,
   validateSlice2RoleScope,
   type Actor
@@ -119,6 +120,55 @@ describe("organization policy engine", () => {
     const result = validateSlice2RoleScope({ roleCode, organizationType });
     expect("ok" in result).toBe(ok);
   });
+
+  it.each([
+    ["GroupAdmin Group A -> Project Group A", actor("GROUP_ADMIN", groupAPath, { permissions: ["project.read", "project.update"] }), groupAPath, "project.update", "allow"],
+    ["GroupAdmin Group A -> Project Unit child", actor("GROUP_ADMIN", groupAPath, { permissions: ["project.read", "project.update"] }), unitAPath, "project.update", "allow"],
+    ["GroupAdmin Group A -> Project Group B", actor("GROUP_ADMIN", groupAPath, { permissions: ["project.read", "project.update"] }), groupBPath, "project.update", "deny"],
+    ["UnitLeader Unit A -> Project Unit A", actor("UNIT_LEADER", unitAPath, { permissions: ["project.read", "project.update"] }), unitAPath, "project.update", "allow"],
+    ["UnitLeader Unit A -> sibling Unit B", actor("UNIT_LEADER", unitAPath, { permissions: ["project.read", "project.update"] }), `${groupAPath}aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9/`, "project.update", "deny"],
+    ["Regional reviewer read allowed", actor("REGIONAL_PROGRAMME_REVIEWER", regionAPath, { permissions: ["project.read"] }), groupAPath, "project.read", "allow"],
+    ["Regional reviewer update denied", actor("REGIONAL_PROGRAMME_REVIEWER", regionAPath, { permissions: ["project.read"] }), groupAPath, "project.update", "deny"],
+    ["RegionalAdmin update denied", actor("REGIONAL_ADMIN", regionAPath, { permissions: ["project.read"] }), groupAPath, "project.update", "deny"],
+    ["PlatformAdmin project read denied", actor("PLATFORM_ADMIN", null, { permissions: ["project.read"] }), groupAPath, "project.read", "deny"]
+  ] as const)("%s", (_label, testActor, ownerPath, action, expected) => {
+    const decision = canAccessProject(
+      testActor,
+      action,
+      {
+        projectId: "project-a",
+        tenantId: tenantA,
+        ownerOrganizationId: ownerPath.split("/").filter(Boolean).at(-1) ?? tenantA,
+        ownerOrganizationPath: ownerPath,
+        status: "DRAFT",
+        createdByAccountId: "creator"
+      },
+      { now }
+    );
+
+    expect(decision.effect).toBe(expected);
+  });
+
+  it("does not give permanent access to a creator without an active scoped assignment", () => {
+    const decision = canAccessProject(
+      actor("GROUP_ADMIN", groupAPath, {
+        permissions: ["project.update"],
+        endsAt: new Date("2026-01-01T00:00:00.000Z")
+      }),
+      "project.update",
+      {
+        projectId: "project-a",
+        tenantId: tenantA,
+        ownerOrganizationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3",
+        ownerOrganizationPath: groupAPath,
+        status: "DRAFT",
+        createdByAccountId: "acct"
+      },
+      { now }
+    );
+
+    expect(decision.effect).toBe("deny");
+  });
 });
 
 function actor(
@@ -129,10 +179,11 @@ function actor(
     readonly endsAt?: Date | null;
     readonly revokedAt?: Date | null;
     readonly accountStatus?: Account["status"];
+    readonly permissions?: PermissionCode[];
   } = {}
 ): Actor {
   const permission: PermissionCode[] =
-    roleCode === "REGIONAL_ADMIN" ? ["organization.read", "role.assign"] : ["organization.read"];
+    options.permissions ?? (roleCode === "REGIONAL_ADMIN" ? ["organization.read", "role.assign"] : ["organization.read"]);
   return {
     account: {
       id: "acct",

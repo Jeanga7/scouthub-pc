@@ -54,3 +54,22 @@ export {
   isRoleAssignmentActive,
   isSlice2GrantableRole
 } from "./authorization/role";
+export type { Project } from "./project/project";
+export {
+  assertSlice3OwnerOrganization,
+  buildInternalProjectSlug,
+  buildProjectCode,
+  normalizeOptionalProjectText,
+  normalizeProjectTitle,
+  validateProjectDateRange
+} from "./project/project";
+export { ProjectDomainError } from "./project/project-errors";
+export type { ProjectMode } from "./project/project-mode";
+export { projectModes } from "./project/project-mode";
+export type { ProjectStatus } from "./project/project-status";
+export { projectStatuses } from "./project/project-status";
+export type { ProjectVisibility } from "./project/project-visibility";
+export {
+  isSlice3MutableProjectVisibility,
+  projectVisibilities
+} from "./project/project-visibility";
