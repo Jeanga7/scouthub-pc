@@ -28,6 +28,16 @@ export type {
   OrganizationRepository,
   OrganizationTransaction
 } from "./ports/organization-repository";
+export type {
+  ProjectDetails,
+  ProjectInsert,
+  ProjectListPage,
+  ProjectOwnerOption,
+  ProjectOwnerResource,
+  ProjectPatch,
+  ProjectRepository,
+  ProjectTransaction
+} from "./ports/project-repository";
 export {
   ApplicationError,
   ConflictError,
@@ -58,3 +68,8 @@ export {
   type EnsureProvisionedAccountInput,
   type InviteAdultUserInput
 } from "./identity/use-cases";
+export {
+  ProjectUseCases,
+  type CreateProjectDraftInput,
+  type UpdateProjectDraftInput
+} from "./project/use-cases";

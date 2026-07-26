@@ -183,6 +183,32 @@ export const roleScopeType = pgEnum("role_scope_type", [
   "GLOBAL_TECH"
 ]);
 
+export const projectMode = pgEnum("project_mode", [
+  "PLANNED",
+  "ALREADY_COMPLETED"
+]);
+
+export const projectStatus = pgEnum("project_status", [
+  "DRAFT",
+  "SUBMITTED",
+  "CHANGES_REQUESTED",
+  "APPROVED",
+  "IN_PROGRESS",
+  "COMPLETED",
+  "FINAL_SUBMITTED",
+  "FINAL_APPROVED",
+  "CANCELLED"
+]);
+
+export const projectVisibility = pgEnum("project_visibility", [
+  "PRIVATE",
+  "INTERNAL",
+  "REVIEW_PUBLIC",
+  "PUBLIC",
+  "UNPUBLISHED",
+  "ARCHIVED"
+]);
+
 export const account = pgTable(
   "account",
   {
@@ -509,5 +535,76 @@ export const accountInvitation = pgTable(
     index("account_invitation_tenant_status_idx").on(table.tenantId, table.status),
     index("account_invitation_email_idx").on(table.email),
     check("account_invitation_email_not_empty", sql`length(btrim(${table.email})) > 0`)
+  ]
+);
+
+export const project = pgTable(
+  "project",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    ownerOrgId: uuid("owner_org_id").notNull(),
+    code: text("code").notNull(),
+    internalSlug: text("internal_slug").notNull(),
+    title: text("title").notNull(),
+    summary: text("summary"),
+    problemStatement: text("problem_statement"),
+    diagnostic: text("diagnostic"),
+    projectMode: projectMode("project_mode").notNull().default("PLANNED"),
+    status: projectStatus("status").notNull().default("DRAFT"),
+    visibility: projectVisibility("visibility").notNull().default("PRIVATE"),
+    locationLabel: text("location_label"),
+    plannedStartAt: timestamp("planned_start_at", { withTimezone: true }),
+    plannedEndAt: timestamp("planned_end_at", { withTimezone: true }),
+    actualStartAt: timestamp("actual_start_at", { withTimezone: true }),
+    actualEndAt: timestamp("actual_end_at", { withTimezone: true }),
+    projectLeadPersonId: uuid("project_lead_person_id").notNull(),
+    createdByAccountId: uuid("created_by_account_id").notNull(),
+    version: integer("version").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+  },
+  (table) => [
+    unique("project_tenant_code_unique").on(table.tenantId, table.code),
+    unique("project_tenant_internal_slug_unique").on(table.tenantId, table.internalSlug),
+    foreignKey({
+      columns: [table.tenantId],
+      foreignColumns: [organization.id],
+      name: "project_tenant_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    foreignKey({
+      columns: [table.ownerOrgId, table.tenantId],
+      foreignColumns: [organization.id, organization.tenantId],
+      name: "project_owner_org_same_tenant_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    foreignKey({
+      columns: [table.projectLeadPersonId, table.tenantId],
+      foreignColumns: [person.id, person.tenantId],
+      name: "project_lead_person_same_tenant_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    foreignKey({
+      columns: [table.createdByAccountId, table.tenantId],
+      foreignColumns: [accountPersonLink.accountId, accountPersonLink.tenantId],
+      name: "project_created_by_account_tenant_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    index("project_tenant_idx").on(table.tenantId),
+    index("project_owner_org_idx").on(table.tenantId, table.ownerOrgId),
+    index("project_status_idx").on(table.tenantId, table.status),
+    index("project_mode_idx").on(table.tenantId, table.projectMode),
+    index("project_updated_at_idx").on(table.tenantId, table.updatedAt, table.id),
+    check("project_version_positive", sql`${table.version} >= 1`),
+    check("project_title_not_empty", sql`length(btrim(${table.title})) > 0`),
+    check(
+      "project_planned_dates_valid",
+      sql`${table.plannedEndAt} IS NULL OR ${table.plannedStartAt} IS NULL OR ${table.plannedEndAt} >= ${table.plannedStartAt}`
+    ),
+    check(
+      "project_actual_dates_valid",
+      sql`${table.actualEndAt} IS NULL OR ${table.actualStartAt} IS NULL OR ${table.actualEndAt} >= ${table.actualStartAt}`
+    )
   ]
 );

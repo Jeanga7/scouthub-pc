@@ -18,9 +18,15 @@ export const identityAuditActions = [
   "identity.login_denied_suspended"
 ] as const;
 
+export const projectAuditActions = [
+  "project.created",
+  "project.updated"
+] as const;
+
 export type OrganizationAuditAction = (typeof organizationAuditActions)[number];
 export type IdentityAuditAction = (typeof identityAuditActions)[number];
-export type AuditAction = OrganizationAuditAction | IdentityAuditAction;
+export type ProjectAuditAction = (typeof projectAuditActions)[number];
+export type AuditAction = OrganizationAuditAction | IdentityAuditAction | ProjectAuditAction;
 export type AuditActorKind = "SYSTEM" | "USER" | "SERVICE";
 
 export interface AuditActor {
@@ -31,7 +37,7 @@ export interface AuditActor {
 export interface AuditEventInput {
   readonly id: string;
   readonly tenantId: string;
-  readonly resourceType: "organization" | "account" | "invitation" | "role_assignment";
+  readonly resourceType: "organization" | "account" | "invitation" | "role_assignment" | "project";
   readonly resourceId: string;
   readonly action: AuditAction;
   readonly actorKind: AuditActorKind;

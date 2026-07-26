@@ -57,7 +57,10 @@ export const permissionCodeSchema = z.enum([
   "role.revoke",
   "account.read",
   "account.suspend",
-  "audit.read"
+  "audit.read",
+  "project.create",
+  "project.read",
+  "project.update"
 ]);
 
 const dateTimeOrNullSchema = z.iso.datetime().nullable().optional();
@@ -246,6 +249,128 @@ export const suspendAccountRequestSchema = z.object({
   tenantId: uuidSchema
 }).strict();
 
+export const projectModeSchema = z.enum(["PLANNED", "ALREADY_COMPLETED"]);
+export const projectStatusSchema = z.enum([
+  "DRAFT",
+  "SUBMITTED",
+  "CHANGES_REQUESTED",
+  "APPROVED",
+  "IN_PROGRESS",
+  "COMPLETED",
+  "FINAL_SUBMITTED",
+  "FINAL_APPROVED",
+  "CANCELLED"
+]);
+export const projectVisibilitySchema = z.enum([
+  "PRIVATE",
+  "INTERNAL",
+  "REVIEW_PUBLIC",
+  "PUBLIC",
+  "UNPUBLISHED",
+  "ARCHIVED"
+]);
+export const slice3ProjectVisibilitySchema = z.enum(["PRIVATE", "INTERNAL"]);
+const projectPatchMutableFields = [
+  "title",
+  "summary",
+  "problemStatement",
+  "diagnostic",
+  "projectMode",
+  "visibility",
+  "locationLabel",
+  "plannedStartAt",
+  "plannedEndAt",
+  "actualStartAt",
+  "actualEndAt"
+] as const;
+
+export const createProjectDraftRequestSchema = z.object({
+  tenantId: uuidSchema,
+  ownerOrganizationId: uuidSchema,
+  title: z.string().min(1),
+  projectMode: projectModeSchema.optional(),
+  visibility: slice3ProjectVisibilitySchema.optional(),
+  summary: z.string().nullable().optional(),
+  problemStatement: z.string().nullable().optional(),
+  diagnostic: z.string().nullable().optional(),
+  locationLabel: z.string().nullable().optional(),
+  plannedStartAt: dateTimePatchSchema,
+  plannedEndAt: dateTimePatchSchema,
+  actualStartAt: dateTimePatchSchema,
+  actualEndAt: dateTimePatchSchema
+}).strict();
+
+export const updateProjectDraftRequestSchema = z.object({
+  tenantId: uuidSchema,
+  expectedVersion: z.number().int().positive(),
+  title: z.string().min(1).optional(),
+  summary: z.string().nullable().optional(),
+  problemStatement: z.string().nullable().optional(),
+  diagnostic: z.string().nullable().optional(),
+  projectMode: projectModeSchema.optional(),
+  visibility: slice3ProjectVisibilitySchema.optional(),
+  locationLabel: z.string().nullable().optional(),
+  plannedStartAt: dateTimePatchSchema,
+  plannedEndAt: dateTimePatchSchema,
+  actualStartAt: dateTimePatchSchema,
+  actualEndAt: dateTimePatchSchema
+}).strict().refine(
+  (payload) => projectPatchMutableFields.some((field) => field in payload),
+  { message: "At least one mutable project field is required." }
+);
+
+export const listProjectsQuerySchema = z.object({
+  tenantId: uuidSchema,
+  cursor: z.string().min(1).optional(),
+  limit: z.coerce.number().int().positive().max(50).optional(),
+  ownerOrganizationId: uuidSchema.optional(),
+  projectMode: projectModeSchema.optional(),
+  status: z.literal("DRAFT").optional()
+});
+
+export const projectResponseSchema = z.object({
+  id: uuidSchema,
+  tenantId: uuidSchema,
+  ownerOrganization: z.object({
+    id: uuidSchema,
+    name: z.string(),
+    type: organizationTypeSchema
+  }),
+  code: z.string(),
+  internalSlug: z.string(),
+  title: z.string(),
+  summary: z.string().nullable(),
+  problemStatement: z.string().nullable(),
+  diagnostic: z.string().nullable(),
+  projectMode: projectModeSchema,
+  status: projectStatusSchema,
+  visibility: projectVisibilitySchema,
+  locationLabel: z.string().nullable(),
+  plannedStartAt: z.iso.datetime().nullable(),
+  plannedEndAt: z.iso.datetime().nullable(),
+  actualStartAt: z.iso.datetime().nullable(),
+  actualEndAt: z.iso.datetime().nullable(),
+  projectLead: z.object({
+    id: uuidSchema,
+    displayName: z.string()
+  }),
+  version: z.number().int().positive(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime()
+});
+
+export const projectListResponseSchema = z.object({
+  projects: z.array(projectResponseSchema),
+  nextCursor: z.string().nullable()
+});
+
+export const projectOwnerOptionSchema = z.object({
+  id: uuidSchema,
+  name: z.string(),
+  type: z.enum(["GROUP", "UNIT"]),
+  path: z.string()
+});
+
 export const problemDetailsSchema = z.object({
   type: z.string(),
   title: z.string(),
@@ -267,3 +392,8 @@ export type AccountAdministrationResponse = z.infer<typeof accountAdministration
 export type RevokeRoleAssignmentRequest = z.infer<typeof revokeRoleAssignmentRequestSchema>;
 export type RevokeInvitationRequest = z.infer<typeof revokeInvitationRequestSchema>;
 export type SuspendAccountRequest = z.infer<typeof suspendAccountRequestSchema>;
+export type CreateProjectDraftRequest = z.infer<typeof createProjectDraftRequestSchema>;
+export type UpdateProjectDraftRequest = z.infer<typeof updateProjectDraftRequestSchema>;
+export type ProjectResponse = z.infer<typeof projectResponseSchema>;
+export type ProjectListResponse = z.infer<typeof projectListResponseSchema>;
+export type ProjectOwnerOption = z.infer<typeof projectOwnerOptionSchema>;
