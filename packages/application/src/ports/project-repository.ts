@@ -3,6 +3,7 @@ import type {
   Person,
   Project,
   ProjectMode,
+  ProjectStatus,
   ProjectVisibility
 } from "@scouthub/domain";
 import type { AuditEventInput } from "../organization/audit";
@@ -19,6 +20,7 @@ export interface ProjectOwnerResource {
 export interface ProjectLeadSummary {
   readonly id: string;
   readonly displayName: string;
+  readonly status: "ACTIVE" | "INACTIVE" | "ANONYMIZED";
 }
 
 export interface ProjectDetails {
@@ -86,6 +88,86 @@ export interface ProjectOwnerOption {
   readonly path: string;
 }
 
+export interface ApprovalRequestRecord {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly projectId: string;
+  readonly status: "PENDING" | "APPROVED" | "CHANGES_REQUESTED" | "REJECTED" | "CANCELLED";
+  readonly submittedProjectVersion: number;
+  readonly requestedByAccountId: string;
+  readonly requestedAt: Date;
+  readonly resolvedAt: Date | null;
+}
+
+export interface ApprovalDecisionRecord {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly approvalRequestId: string;
+  readonly reviewerAccountId: string;
+  readonly decision: "APPROVED" | "CHANGES_REQUESTED" | "REJECTED";
+  readonly reason: string | null;
+  readonly decidedAt: Date;
+}
+
+export interface StateTransitionRecord {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly entityId: string;
+  readonly fromState: ProjectStatus;
+  readonly toState: ProjectStatus;
+  readonly actorAccountId: string;
+  readonly approvalRequestId: string | null;
+  readonly reason: string | null;
+  readonly occurredAt: Date;
+}
+
+export interface ProjectCommentRecord {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly projectId: string;
+  readonly approvalRequestId: string;
+  readonly authorAccountId: string;
+  readonly kind: "GLOBAL" | "FIELD";
+  readonly fieldKey: string | null;
+  readonly body: string;
+  readonly createdAt: Date;
+}
+
+export interface ReviewQueueCursor {
+  readonly requestedAt: Date;
+  readonly id: string;
+}
+
+export interface ReviewQueueItem {
+  readonly approvalRequestId: string;
+  readonly projectId: string;
+  readonly code: string;
+  readonly title: string;
+  readonly ownerOrganization: {
+    readonly id: string;
+    readonly name: string;
+    readonly type: "GROUP" | "UNIT";
+  };
+  readonly projectStatus: ProjectStatus;
+  readonly projectVersion: number;
+  readonly requestedAt: Date;
+  readonly requestedByAccountId: string;
+  readonly submittedProjectVersion: number;
+  readonly isResubmission: boolean;
+}
+
+export interface ReviewQueuePage {
+  readonly items: readonly ReviewQueueItem[];
+  readonly nextCursor: ReviewQueueCursor | null;
+}
+
+export interface ProjectReviewHistory {
+  readonly requests: readonly ApprovalRequestRecord[];
+  readonly decisions: readonly ApprovalDecisionRecord[];
+  readonly comments: readonly ProjectCommentRecord[];
+  readonly transitions: readonly StateTransitionRecord[];
+}
+
 export interface ProjectTransaction {
   findOwnerOrganization(
     tenantId: string,
@@ -96,6 +178,11 @@ export interface ProjectTransaction {
     accountId: string
   ): Promise<Person | null>;
   findProjectById(tenantId: string, projectId: string): Promise<ProjectDetails | null>;
+  findProjectByIdForUpdate(tenantId: string, projectId: string): Promise<ProjectDetails | null>;
+  findApprovalRequestByIdForUpdate(
+    tenantId: string,
+    approvalRequestId: string
+  ): Promise<ApprovalRequestRecord | null>;
   listProjectsForScopes(input: {
     readonly tenantId: string;
     readonly scopePaths: readonly string[];
@@ -114,6 +201,66 @@ export interface ProjectTransaction {
     expectedVersion: number,
     patch: ProjectPatch
   ): Promise<ProjectDetails | null>;
+  updateProjectStatus(input: {
+    readonly tenantId: string;
+    readonly projectId: string;
+    readonly expectedVersion: number;
+    readonly fromStatus: ProjectStatus;
+    readonly toStatus: ProjectStatus;
+  }): Promise<ProjectDetails | null>;
+  createApprovalRequest(input: {
+    readonly id: string;
+    readonly tenantId: string;
+    readonly projectId: string;
+    readonly submittedProjectVersion: number;
+    readonly requestedByAccountId: string;
+    readonly requestedAt: Date;
+  }): Promise<ApprovalRequestRecord>;
+  resolveApprovalRequest(input: {
+    readonly tenantId: string;
+    readonly approvalRequestId: string;
+    readonly status: "APPROVED" | "CHANGES_REQUESTED" | "REJECTED";
+    readonly resolvedAt: Date;
+  }): Promise<ApprovalRequestRecord | null>;
+  appendApprovalDecision(input: {
+    readonly id: string;
+    readonly tenantId: string;
+    readonly approvalRequestId: string;
+    readonly reviewerAccountId: string;
+    readonly decision: "APPROVED" | "CHANGES_REQUESTED" | "REJECTED";
+    readonly reason: string | null;
+    readonly decidedAt: Date;
+  }): Promise<ApprovalDecisionRecord>;
+  appendStateTransition(input: {
+    readonly id: string;
+    readonly tenantId: string;
+    readonly projectId: string;
+    readonly fromState: ProjectStatus;
+    readonly toState: ProjectStatus;
+    readonly actorAccountId: string;
+    readonly approvalRequestId: string | null;
+    readonly reason: string | null;
+    readonly occurredAt: Date;
+  }): Promise<StateTransitionRecord>;
+  appendProjectComment(input: {
+    readonly id: string;
+    readonly tenantId: string;
+    readonly projectId: string;
+    readonly approvalRequestId: string;
+    readonly authorAccountId: string;
+    readonly kind: "GLOBAL" | "FIELD";
+    readonly fieldKey: string | null;
+    readonly body: string;
+    readonly createdAt: Date;
+  }): Promise<ProjectCommentRecord>;
+  listReviewQueueForScopes(input: {
+    readonly tenantId: string;
+    readonly scopePaths: readonly string[];
+    readonly limit: number;
+    readonly cursor: ReviewQueueCursor | null;
+    readonly status?: ApprovalRequestRecord["status"];
+  }): Promise<ReviewQueuePage>;
+  listProjectReviewHistory(tenantId: string, projectId: string): Promise<ProjectReviewHistory>;
   appendAuditEvent(input: AuditEventInput): Promise<void>;
 }
 

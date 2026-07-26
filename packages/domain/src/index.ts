@@ -73,3 +73,22 @@ export {
   isSlice3MutableProjectVisibility,
   projectVisibilities
 } from "./project/project-visibility";
+export type {
+  ApprovalDecision,
+  ApprovalRequestStatus,
+  ApprovalResourceType,
+  ApprovalStage,
+  ApprovalWorkflow,
+  ProjectCommentFieldKey,
+  ProjectCommentKind,
+  Slice4ProjectTransition
+} from "./project/project-workflow";
+export {
+  assertProjectCommentShape,
+  assertSlice4Transition,
+  isProjectContentEditable,
+  normalizeReviewText,
+  projectCommentFieldKeys,
+  slice4EditableProjectStatuses,
+  slice4ProjectTransitions
+} from "./project/project-workflow";
