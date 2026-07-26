@@ -252,14 +252,23 @@ export const suspendAccountRequestSchema = z.object({
 export const projectModeSchema = z.enum(["PLANNED", "ALREADY_COMPLETED"]);
 export const projectStatusSchema = z.enum([
   "DRAFT",
-  "SUBMITTED",
+  "READY_FOR_REVIEW",
+  "IN_REVIEW",
   "CHANGES_REQUESTED",
-  "APPROVED",
-  "IN_PROGRESS",
-  "COMPLETED",
-  "FINAL_SUBMITTED",
-  "FINAL_APPROVED",
-  "CANCELLED"
+  "APPROVED_FOR_EXECUTION",
+  "IN_EXECUTION",
+  "EXECUTION_COMPLETED",
+  "FINAL_REVIEW",
+  "FINAL_CHANGES_REQUESTED",
+  "VALIDATED",
+  "READY_FOR_PUBLICATION",
+  "PUBLISHED",
+  "EXTERNAL_SUBMITTED",
+  "MONITORING",
+  "CLOSED",
+  "CANCELLED",
+  "REJECTED",
+  "ARCHIVED"
 ]);
 export const projectVisibilitySchema = z.enum([
   "PRIVATE",
@@ -354,6 +363,9 @@ export const projectResponseSchema = z.object({
     id: uuidSchema,
     displayName: z.string()
   }),
+  capabilities: z.object({
+    canUpdate: z.boolean()
+  }).optional(),
   version: z.number().int().positive(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime()

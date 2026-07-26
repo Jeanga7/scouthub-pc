@@ -3,6 +3,7 @@ import "pg-cloudflare";
 import pg from "pg";
 import type { QueryResultRow } from "pg";
 import type {
+  Person,
   Project,
   ProjectMode,
   ProjectVisibility
@@ -69,6 +70,19 @@ type OwnerRow = QueryResultRow & {
   path: string;
 };
 
+type PersonRow = QueryResultRow & {
+  id: string;
+  tenant_id: string;
+  first_name: string;
+  last_name: string;
+  display_name: string;
+  birth_date: Date | null;
+  classification: Person["classification"];
+  status: Person["status"];
+  created_at: Date;
+  updated_at: Date;
+};
+
 export function createPgProjectRepository(databaseUrl: string): ProjectRepository {
   return new PgProjectRepository(databaseUrl);
 }
@@ -109,6 +123,24 @@ class PgProjectTransaction implements ProjectTransaction {
       [tenantId, organizationId]
     );
     return result.rows[0] === undefined ? null : mapOwner(result.rows[0]);
+  }
+
+  async findPersonForAccountInTenant(
+    tenantId: string,
+    accountId: string
+  ): Promise<Person | null> {
+    const result = await this.db.query<PersonRow>(
+      `SELECT p.*
+       FROM person p
+       JOIN account_person_link apl
+         ON apl.person_id = p.id
+        AND apl.tenant_id = p.tenant_id
+       WHERE apl.tenant_id = $1
+         AND apl.account_id = $2
+       LIMIT 1`,
+      [tenantId, accountId]
+    );
+    return result.rows[0] === undefined ? null : mapPerson(result.rows[0]);
   }
 
   async findProjectById(tenantId: string, projectId: string): Promise<ProjectDetails | null> {
@@ -384,6 +416,21 @@ function mapOwner(row: OwnerRow): ProjectOwnerResource {
   };
 }
 
+function mapPerson(row: PersonRow): Person {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    firstName: row.first_name,
+    lastName: row.last_name,
+    displayName: row.display_name,
+    birthDate: row.birth_date,
+    classification: row.classification,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
 async function catchProjectUniqueConflict<TResult>(
   operation: () => Promise<TResult>
 ): Promise<TResult> {
@@ -409,4 +456,3 @@ function hasConstraint(error: unknown, constraint: string): boolean {
   }
   return "cause" in error && hasConstraint(error.cause, constraint);
 }
-

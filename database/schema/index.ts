@@ -190,14 +190,23 @@ export const projectMode = pgEnum("project_mode", [
 
 export const projectStatus = pgEnum("project_status", [
   "DRAFT",
-  "SUBMITTED",
+  "READY_FOR_REVIEW",
+  "IN_REVIEW",
   "CHANGES_REQUESTED",
-  "APPROVED",
-  "IN_PROGRESS",
-  "COMPLETED",
-  "FINAL_SUBMITTED",
-  "FINAL_APPROVED",
-  "CANCELLED"
+  "APPROVED_FOR_EXECUTION",
+  "IN_EXECUTION",
+  "EXECUTION_COMPLETED",
+  "FINAL_REVIEW",
+  "FINAL_CHANGES_REQUESTED",
+  "VALIDATED",
+  "READY_FOR_PUBLICATION",
+  "PUBLISHED",
+  "EXTERNAL_SUBMITTED",
+  "MONITORING",
+  "CLOSED",
+  "CANCELLED",
+  "REJECTED",
+  "ARCHIVED"
 ]);
 
 export const projectVisibility = pgEnum("project_visibility", [

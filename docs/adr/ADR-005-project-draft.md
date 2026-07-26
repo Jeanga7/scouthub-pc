@@ -14,7 +14,7 @@ Slice 3 introduces the first Projects & Impact business object. It must allow au
 
 Slice 3 creates only `DRAFT` projects. It does not expose submit, review, approval, request changes, publication or state transition tables. Visibility can be set only to `PRIVATE` or `INTERNAL`; public publication remains owned by Slice 10.
 
-The project code is a stable ScoutHub-PC technical reference such as `PRJ-XXXXXXXX`. It is not an official OSN numbering scheme. `internal_slug` is tenant-unique and human-readable, but it is not public and is never an authorization mechanism.
+The project code is a stable ScoutHub-PC technical reference such as `PRJ-XXXXXXXXXXXX`, using a 12-hex-character suffix. It is not an official OSN numbering scheme. `internal_slug` is tenant-unique and human-readable, but it is not public and is never an authorization mechanism.
 
 Project authorization is provider-neutral and extends `@scouthub/authz`. A `ProjectResource` is authorized through its owner Organization path. Permission and scope must come from the same active RoleAssignment, preserving the Slice 2 invariant.
 

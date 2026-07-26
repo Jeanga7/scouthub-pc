@@ -20,8 +20,10 @@ const ids = {
   groupTenantB: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3",
   account: "cccccccc-cccc-4ccc-8ccc-ccccccccccc1",
   person: "cccccccc-cccc-4ccc-8ccc-ccccccccccc2",
+  personTenantB: "cccccccc-cccc-4ccc-8ccc-ccccccccccc3",
   project: "dddddddd-dddd-4ddd-8ddd-ddddddddddd1",
-  projectTwo: "dddddddd-dddd-4ddd-8ddd-ddddddddddd2"
+  projectTwo: "dddddddd-dddd-4ddd-8ddd-ddddddddddd2",
+  projectTenantB: "dddddddd-dddd-4ddd-8ddd-ddddddddddd3"
 };
 
 const now = new Date("2026-07-25T12:00:00.000Z");
@@ -56,7 +58,7 @@ describe("PgProjectRepository", () => {
     expect(created.project.ownerOrganizationId).toBe(ids.groupA);
     expect(created.project.createdByAccountId).toBe(ids.account);
     expect(created.project.projectLeadPersonId).toBe(ids.person);
-    expect(created.project.code).toBe("PRJ-DDDDDDDD");
+    expect(created.project.code).toBe("PRJ-DDDDDDDDDDDD");
 
     const updated = await useCases.updateProjectDraft({
       actor: groupAdminActor(),
@@ -113,14 +115,59 @@ describe("PgProjectRepository", () => {
       tenantId: ids.tenant,
       ownerOrganizationId: ids.region,
       title: "Projet region"
-    })).rejects.toThrow("group or unit");
+    })).rejects.toMatchObject({
+      code: "PROJECT_OWNER_TYPE_INVALID",
+      status: 422
+    });
 
     await expect(useCases.createProjectDraft({
-      actor: { ...groupAdminActor(), person: null },
+      actor: groupAdminActor(),
       tenantId: ids.tenant,
       ownerOrganizationId: ids.groupA,
-      title: "Sans personne"
+      title: "   "
+    })).rejects.toMatchObject({
+      code: "PROJECT_TITLE_REQUIRED",
+      status: 422
+    });
+
+    await expect(useCases.createProjectDraft({
+      actor: groupAdminActor(),
+      tenantId: ids.tenant,
+      ownerOrganizationId: ids.groupA,
+      title: "Dates invalides",
+      plannedStartAt: new Date("2026-09-01T00:00:00.000Z"),
+      plannedEndAt: new Date("2026-08-01T00:00:00.000Z")
+    })).rejects.toMatchObject({
+      code: "PROJECT_PLANNED_DATES_INVALID",
+      status: 422
+    });
+
+    await expect(useCases.createProjectDraft({
+      actor: tenantBWithoutPersonActor(),
+      tenantId: ids.tenantB,
+      ownerOrganizationId: ids.groupTenantB,
+      title: "Sans personne tenant"
     })).rejects.toThrow("Person");
+  });
+
+  it("resolves the project lead Person for the target tenant", async () => {
+    const useCases = createUseCases([ids.project, ids.projectTenantB]);
+
+    const tenantAProject = await useCases.createProjectDraft({
+      actor: groupAdminActor(),
+      tenantId: ids.tenant,
+      ownerOrganizationId: ids.groupA,
+      title: "Projet tenant A"
+    });
+    const tenantBProject = await useCases.createProjectDraft({
+      actor: tenantBGroupAdminActor(),
+      tenantId: ids.tenantB,
+      ownerOrganizationId: ids.groupTenantB,
+      title: "Projet tenant B"
+    });
+
+    expect(tenantAProject.project.projectLeadPersonId).toBe(ids.person);
+    expect(tenantBProject.project.projectLeadPersonId).toBe(ids.personTenantB);
   });
 
   it("lists only projects covered by the same active project.read assignment", async () => {
@@ -132,7 +179,7 @@ describe("PgProjectRepository", () => {
       title: "Nettoyage plage"
     });
     await useCases.createProjectDraft({
-      actor: regionalCreatorActor(),
+      actor: groupBAdminActor(),
       tenantId: ids.tenant,
       ownerOrganizationId: ids.groupB,
       title: "Bibliotheque mobile"
@@ -164,6 +211,21 @@ describe("PgProjectRepository", () => {
       filters: {}
     });
     expect(tenantB.projects).toHaveLength(0);
+  });
+
+  it("lists owner options from every active project.create scope", async () => {
+    const useCases = createUseCases([]);
+
+    const options = await useCases.listProjectOwnerOptions({
+      actor: multiGroupAdminActor(),
+      tenantId: ids.tenant
+    });
+
+    expect(options.map((option) => option.id)).toEqual([
+      ids.groupA,
+      ids.unitA,
+      ids.groupB
+    ]);
   });
 });
 
@@ -200,8 +262,10 @@ async function seedBase(pool: Pool): Promise<void> {
   );
   await pool.query(
     `INSERT INTO person (id, tenant_id, first_name, last_name, display_name)
-     VALUES ($1, $2, 'Awa', 'Test', 'Awa Test')`,
-    [ids.person, ids.tenant]
+     VALUES
+      ($1, $2, 'Awa', 'Test', 'Awa Test'),
+      ($3, $4, 'Awa', 'Beta', 'Awa Beta')`,
+    [ids.person, ids.tenant, ids.personTenantB, ids.tenantB]
   );
   await pool.query(
     `INSERT INTO account (id, external_identity_id, primary_email, status, email_verified_at)
@@ -209,8 +273,11 @@ async function seedBase(pool: Pool): Promise<void> {
     [ids.account, now]
   );
   await pool.query(
-    "INSERT INTO account_person_link (account_id, tenant_id, person_id) VALUES ($1, $2, $3)",
-    [ids.account, ids.tenant, ids.person]
+    `INSERT INTO account_person_link (account_id, tenant_id, person_id)
+     VALUES
+      ($1, $2, $3),
+      ($1, $4, $5)`,
+    [ids.account, ids.tenant, ids.person, ids.tenantB, ids.personTenantB]
   );
 }
 
@@ -244,13 +311,13 @@ function groupAdminActor(): ActorContext {
   });
 }
 
-function regionalCreatorActor(): ActorContext {
+function groupBAdminActor(): ActorContext {
   return actor({
     roleCode: "GROUP_ADMIN",
     permissions: ["project.create", "project.read", "project.update"],
-    scopeOrgId: ids.region,
-    scopePath: `/${ids.tenant}/${ids.region}/`,
-    scopeType: "REGION"
+    scopeOrgId: ids.groupB,
+    scopePath: `/${ids.tenant}/${ids.region}/${ids.groupB}/`,
+    scopeType: "GROUP"
   });
 }
 
@@ -264,16 +331,59 @@ function regionalReaderActor(): ActorContext {
   });
 }
 
+function tenantBGroupAdminActor(): ActorContext {
+  return actor({
+    roleCode: "GROUP_ADMIN",
+    permissions: ["project.create", "project.read", "project.update"],
+    scopeOrgId: ids.groupTenantB,
+    scopePath: `/${ids.tenantB}/${ids.regionB}/${ids.groupTenantB}/`,
+    scopeType: "GROUP",
+    tenantId: ids.tenantB,
+    personId: ids.personTenantB
+  });
+}
+
+function tenantBWithoutPersonActor(): ActorContext {
+  return actor({
+    roleCode: "GROUP_ADMIN",
+    permissions: ["project.create", "project.read", "project.update"],
+    scopeOrgId: ids.groupTenantB,
+    scopePath: `/${ids.tenantB}/${ids.regionB}/${ids.groupTenantB}/`,
+    scopeType: "GROUP",
+    tenantId: ids.tenantB,
+    personId: null,
+    accountId: "cccccccc-cccc-4ccc-8ccc-ccccccccccc4"
+  });
+}
+
+function multiGroupAdminActor(): ActorContext {
+  const first = groupAdminActor();
+  const second = groupBAdminActor().assignments[0];
+  if (second === undefined) {
+    throw new Error("Expected second assignment.");
+  }
+  return {
+    ...first,
+    assignments: [...first.assignments, { ...second, id: "ffffffff-ffff-4fff-8fff-fffffffffff9" }]
+  };
+}
+
 function actor(input: {
   readonly roleCode: ActorContext["assignments"][number]["roleCode"];
   readonly permissions: ActorContext["assignments"][number]["permissions"];
   readonly scopeOrgId: string;
   readonly scopePath: string;
   readonly scopeType: ActorContext["assignments"][number]["scopeType"];
+  readonly tenantId?: string;
+  readonly personId?: string | null;
+  readonly accountId?: string;
 }): ActorContext {
+  const tenantId = input.tenantId ?? ids.tenant;
+  const accountId = input.accountId ?? ids.account;
+  const personId = input.personId === undefined ? ids.person : input.personId;
   return {
     account: {
-      id: ids.account,
+      id: accountId,
       externalIdentityId: "user_test",
       primaryEmail: "awa@example.test",
       status: "ACTIVE",
@@ -282,9 +392,9 @@ function actor(input: {
       createdAt: now,
       updatedAt: now
     },
-    person: {
-      id: ids.person,
-      tenantId: ids.tenant,
+    person: personId === null ? null : {
+      id: personId,
+      tenantId,
       firstName: "Awa",
       lastName: "Test",
       displayName: "Awa Test",
@@ -297,8 +407,8 @@ function actor(input: {
     assuranceLevel: "standard",
     assignments: [{
       id: "ffffffff-ffff-4fff-8fff-fffffffffff1",
-      tenantId: ids.tenant,
-      accountId: ids.account,
+      tenantId,
+      accountId,
       roleId: "ffffffff-ffff-4fff-8fff-fffffffffff2",
       roleCode: input.roleCode,
       permissions: input.permissions,

@@ -36,8 +36,7 @@ describe("project draft domain invariants", () => {
   });
 
   it("builds stable internal references without using the title as code", () => {
-    expect(buildProjectCode("a1b2c3d4")).toBe("PRJ-A1B2C3D4");
-    expect(buildInternalProjectSlug("Reboisement Mbour", "a1b2")).toBe("reboisement-mbour-a1b2");
+    expect(buildProjectCode("a1b2c3d4e5f6")).toBe("PRJ-A1B2C3D4E5F6");
+    expect(buildInternalProjectSlug("Reboisement Mbour", "a1b2c3d4e5f6")).toBe("reboisement-mbour-a1b2c3d4e5f6");
   });
 });
-

@@ -26,12 +26,16 @@ export async function GET(
     const url = new URL(request.url);
     const query = tenantQuerySchema.parse(Object.fromEntries(url.searchParams));
     const actor = await requireProjectActor(request, currentRequestId);
-    const details = await createProjectUseCases().getProject({
+    const useCases = createProjectUseCases();
+    const details = await useCases.getProject({
       actor,
       tenantId: query.tenantId,
       projectId
     });
-    return jsonResponse(mapProject(details), currentRequestId);
+    return jsonResponse(
+      mapProject(details, useCases.getProjectCapabilities({ actor, project: details })),
+      currentRequestId
+    );
   } catch (error) {
     return handleRouteError(error, currentRequestId);
   }
@@ -60,4 +64,3 @@ export async function PATCH(
     return handleRouteError(error, currentRequestId);
   }
 }
-

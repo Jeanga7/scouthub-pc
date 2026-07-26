@@ -6,6 +6,7 @@ import {
   isSlice3MutableProjectVisibility,
   normalizeOptionalProjectText,
   normalizeProjectTitle,
+  ProjectDomainError,
   validateProjectDateRange,
   type Project,
   type ProjectMode,
@@ -78,21 +79,28 @@ export class ProjectUseCases {
   ) {}
 
   async createProjectDraft(input: CreateProjectDraftInput): Promise<ProjectDetails> {
-    const actorPerson = input.actor.person;
-    if (actorPerson === null || actorPerson.tenantId !== input.tenantId) {
-      throw new ValidationError("A tenant Person is required to create a project.", "PROJECT_PERSON_REQUIRED", 403);
-    }
-    const title = normalizeProjectTitle(input.title);
-    const fields = normalizeDraftFields(input);
-    validateProjectDateRange(fields.plannedStartAt, fields.plannedEndAt, "PROJECT_PLANNED_DATES_INVALID");
-    validateProjectDateRange(fields.actualStartAt, fields.actualEndAt, "PROJECT_ACTUAL_DATES_INVALID");
+    const title = domainValidation(() => normalizeProjectTitle(input.title));
+    const fields = domainValidation(() => normalizeDraftFields(input));
+    domainValidation(() =>
+      validateProjectDateRange(fields.plannedStartAt, fields.plannedEndAt, "PROJECT_PLANNED_DATES_INVALID")
+    );
+    domainValidation(() =>
+      validateProjectDateRange(fields.actualStartAt, fields.actualEndAt, "PROJECT_ACTUAL_DATES_INVALID")
+    );
 
     return this.repository.transaction(async (transaction) => {
+      const tenantPerson = await transaction.findPersonForAccountInTenant(
+        input.tenantId,
+        input.actor.account.id
+      );
+      if (tenantPerson === null) {
+        throw new ValidationError("A tenant Person is required to create a project.", "PROJECT_PERSON_REQUIRED", 403);
+      }
       const owner = await transaction.findOwnerOrganization(input.tenantId, input.ownerOrganizationId);
       if (owner === null) {
         throw new NotFoundError("Project owner organization not found.");
       }
-      assertSlice3OwnerOrganization(owner);
+      domainValidation(() => assertSlice3OwnerOrganization(owner));
       assertProjectPolicy(input.actor, "project.create", {
         projectId: "new",
         tenantId: input.tenantId,
@@ -122,7 +130,7 @@ export class ProjectUseCases {
         plannedEndAt: fields.plannedEndAt,
         actualStartAt: fields.actualStartAt,
         actualEndAt: fields.actualEndAt,
-        projectLeadPersonId: actorPerson.id,
+        projectLeadPersonId: tenantPerson.id,
         createdByAccountId: input.actor.account.id
       });
       await transaction.appendAuditEvent(projectAuditEvent({
@@ -154,6 +162,20 @@ export class ProjectUseCases {
       assertProjectPolicy(input.actor, "project.read", resourceFromDetails(details), this.clock.now());
       return details;
     });
+  }
+
+  getProjectCapabilities(input: {
+    readonly actor: ActorContext;
+    readonly project: ProjectDetails;
+  }): { readonly canUpdate: boolean } {
+    return {
+      canUpdate: canAccessProject(
+        input.actor,
+        "project.update",
+        resourceFromDetails(input.project),
+        { now: this.clock.now() }
+      ).effect === "allow"
+    };
   }
 
   async listProjects(input: {
@@ -203,15 +225,19 @@ export class ProjectUseCases {
       assertProjectPolicy(input.actor, "project.update", resourceFromDetails(current), this.clock.now());
 
       const patch = buildProjectPatch(input);
-      validateProjectDateRange(
-        patch.plannedStartAt === undefined ? current.project.plannedStartAt : patch.plannedStartAt,
-        patch.plannedEndAt === undefined ? current.project.plannedEndAt : patch.plannedEndAt,
-        "PROJECT_PLANNED_DATES_INVALID"
+      domainValidation(() =>
+        validateProjectDateRange(
+          patch.plannedStartAt === undefined ? current.project.plannedStartAt : patch.plannedStartAt,
+          patch.plannedEndAt === undefined ? current.project.plannedEndAt : patch.plannedEndAt,
+          "PROJECT_PLANNED_DATES_INVALID"
+        )
       );
-      validateProjectDateRange(
-        patch.actualStartAt === undefined ? current.project.actualStartAt : patch.actualStartAt,
-        patch.actualEndAt === undefined ? current.project.actualEndAt : patch.actualEndAt,
-        "PROJECT_ACTUAL_DATES_INVALID"
+      domainValidation(() =>
+        validateProjectDateRange(
+          patch.actualStartAt === undefined ? current.project.actualStartAt : patch.actualStartAt,
+          patch.actualEndAt === undefined ? current.project.actualEndAt : patch.actualEndAt,
+          "PROJECT_ACTUAL_DATES_INVALID"
+        )
       );
 
       const updated = await transaction.updateProject(
@@ -277,16 +303,17 @@ function scopePathsFor(
 function buildProjectPatch(input: UpdateProjectDraftInput): ProjectPatch {
   const patch: Mutable<ProjectPatch> = {};
   if (input.title !== undefined) {
-    patch.title = normalizeProjectTitle(input.title);
+    const title = input.title;
+    patch.title = domainValidation(() => normalizeProjectTitle(title));
   }
   if ("summary" in input) {
-    patch.summary = normalizeOptionalProjectText(input.summary);
+    patch.summary = domainValidation(() => normalizeOptionalProjectText(input.summary));
   }
   if ("problemStatement" in input) {
-    patch.problemStatement = normalizeOptionalProjectText(input.problemStatement);
+    patch.problemStatement = domainValidation(() => normalizeOptionalProjectText(input.problemStatement));
   }
   if ("diagnostic" in input) {
-    patch.diagnostic = normalizeOptionalProjectText(input.diagnostic);
+    patch.diagnostic = domainValidation(() => normalizeOptionalProjectText(input.diagnostic));
   }
   if (input.projectMode !== undefined) {
     patch.projectMode = input.projectMode;
@@ -298,7 +325,7 @@ function buildProjectPatch(input: UpdateProjectDraftInput): ProjectPatch {
     patch.visibility = input.visibility;
   }
   if ("locationLabel" in input) {
-    patch.locationLabel = normalizeOptionalProjectText(input.locationLabel);
+    patch.locationLabel = domainValidation(() => normalizeOptionalProjectText(input.locationLabel));
   }
   if ("plannedStartAt" in input) {
     patch.plannedStartAt = input.plannedStartAt ?? null;
@@ -405,7 +432,18 @@ function projectAuditEvent(input: {
 }
 
 function compactSuffix(id: string): string {
-  return id.replace(/-/g, "").slice(0, 8);
+  return id.replace(/-/g, "").slice(0, 12);
+}
+
+function domainValidation<TResult>(operation: () => TResult): TResult {
+  try {
+    return operation();
+  } catch (error) {
+    if (error instanceof ProjectDomainError) {
+      throw new ValidationError(error.message, error.code, 422);
+    }
+    throw error;
+  }
 }
 
 type Mutable<T> = {

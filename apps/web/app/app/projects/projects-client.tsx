@@ -4,7 +4,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type {
-  OrganizationResponse,
   ProjectOwnerOption,
   ProjectResponse
 } from "@scouthub/contracts";
@@ -21,9 +20,10 @@ interface MeResponse {
 export function ProjectsListClient() {
   const [projects, setProjects] = useState<ProjectResponse[]>([]);
   const [tenantId, setTenantId] = useState("");
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [message, setMessage] = useState("Chargement...");
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (cursor?: string) => {
     try {
       const me = await fetchJson<MeResponse>("/api/v1/me");
       const assignment = me.roleAssignments.find((item) =>
@@ -34,10 +34,21 @@ export function ProjectsListClient() {
         return;
       }
       setTenantId(assignment.tenantId);
-      const response = await fetchJson<{ readonly projects: ProjectResponse[] }>(
-        `/api/v1/projects?tenantId=${assignment.tenantId}&limit=20`
+      const params = new URLSearchParams({
+        tenantId: assignment.tenantId,
+        limit: "20"
+      });
+      if (cursor !== undefined) {
+        params.set("cursor", cursor);
+      }
+      const response = await fetchJson<{
+        readonly projects: ProjectResponse[];
+        readonly nextCursor: string | null;
+      }>(
+        `/api/v1/projects?${params.toString()}`
       );
-      setProjects(response.projects);
+      setProjects((current) => cursor === undefined ? response.projects : [...current, ...response.projects]);
+      setNextCursor(response.nextCursor);
       setMessage(response.projects.length === 0 ? "Aucun brouillon accessible." : "");
     } catch {
       setMessage("Impossible de charger les projets.");
@@ -75,6 +86,9 @@ export function ProjectsListClient() {
           </article>
         ))}
       </div>
+      {nextCursor !== null ? (
+        <button type="button" onClick={() => { void load(nextCursor); }}>Charger plus</button>
+      ) : null}
     </section>
   );
 }
@@ -90,23 +104,18 @@ export function NewProjectClient() {
     try {
       const me = await fetchJson<MeResponse>("/api/v1/me");
       const assignment = me.roleAssignments.find((item) =>
-        item.permissions.includes("project.create") && item.scopeOrgId !== null
+        item.permissions.includes("project.create")
       );
-      if (assignment === undefined || assignment.scopeOrgId === null) {
+      if (assignment === undefined) {
         setMessage("Creation de projet non autorisee.");
         return;
       }
       setTenantId(assignment.tenantId);
-      const root = await fetchJson<OrganizationResponse>(
-        `/api/v1/organizations/${assignment.scopeOrgId}?tenantId=${assignment.tenantId}`
+      const options = await fetchJson<ProjectOwnerOption[]>(
+        `/api/v1/projects/owner-options?tenantId=${assignment.tenantId}`
       );
-      const descendants = await fetchJson<OrganizationResponse[]>(
-        `/api/v1/organizations/${assignment.scopeOrgId}/descendants?tenantId=${assignment.tenantId}`
-      );
-      setOwners([root, ...descendants]
-        .filter((org) => org.status === "ACTIVE" && (org.type === "GROUP" || org.type === "UNIT"))
-        .map((org) => ({ id: org.id, name: org.name, type: org.type as "GROUP" | "UNIT", path: org.path })));
-      setMessage("");
+      setOwners(options);
+      setMessage(options.length === 0 ? "Aucune organisation eligible." : "");
     } catch {
       setMessage("Impossible de charger les organisations.");
     }
@@ -262,24 +271,34 @@ export function ProjectOverviewClient({ projectId, initialTenantId }: {
           <p className="eyebrow">{project.status}</p>
           <h1>{project.title}</h1>
           <p>{project.code} - {project.ownerOrganization.name}</p>
-          <form className="project-form" action={save}>
-            <label htmlFor="title">Titre</label>
-            <input id="title" name="title" required defaultValue={project.title} />
-            <label htmlFor="summary">Resume</label>
-            <textarea id="summary" name="summary" defaultValue={project.summary ?? ""} />
-            <label htmlFor="problemStatement">Probleme observe</label>
-            <textarea id="problemStatement" name="problemStatement" defaultValue={project.problemStatement ?? ""} />
-            <label htmlFor="diagnostic">Diagnostic</label>
-            <textarea id="diagnostic" name="diagnostic" defaultValue={project.diagnostic ?? ""} />
-            <label htmlFor="locationLabel">Lieu</label>
-            <input id="locationLabel" name="locationLabel" defaultValue={project.locationLabel ?? ""} />
-            <label htmlFor="visibility">Visibilite</label>
-            <select id="visibility" name="visibility" defaultValue={project.visibility}>
-              <option value="PRIVATE">Private</option>
-              <option value="INTERNAL">Internal</option>
-            </select>
-            <button type="submit">Enregistrer le brouillon</button>
-          </form>
+          {project.capabilities?.canUpdate === true ? (
+            <form className="project-form" action={save}>
+              <label htmlFor="title">Titre</label>
+              <input id="title" name="title" required defaultValue={project.title} />
+              <label htmlFor="summary">Resume</label>
+              <textarea id="summary" name="summary" defaultValue={project.summary ?? ""} />
+              <label htmlFor="problemStatement">Probleme observe</label>
+              <textarea id="problemStatement" name="problemStatement" defaultValue={project.problemStatement ?? ""} />
+              <label htmlFor="diagnostic">Diagnostic</label>
+              <textarea id="diagnostic" name="diagnostic" defaultValue={project.diagnostic ?? ""} />
+              <label htmlFor="locationLabel">Lieu</label>
+              <input id="locationLabel" name="locationLabel" defaultValue={project.locationLabel ?? ""} />
+              <label htmlFor="visibility">Visibilite</label>
+              <select id="visibility" name="visibility" defaultValue={project.visibility}>
+                <option value="PRIVATE">Private</option>
+                <option value="INTERNAL">Internal</option>
+              </select>
+              <button type="submit">Enregistrer le brouillon</button>
+            </form>
+          ) : (
+            <dl className="project-readonly">
+              <div><dt>Resume</dt><dd>{project.summary ?? "Non renseigne"}</dd></div>
+              <div><dt>Probleme observe</dt><dd>{project.problemStatement ?? "Non renseigne"}</dd></div>
+              <div><dt>Diagnostic</dt><dd>{project.diagnostic ?? "Non renseigne"}</dd></div>
+              <div><dt>Lieu</dt><dd>{project.locationLabel ?? "Non renseigne"}</dd></div>
+              <div><dt>Visibilite</dt><dd>{project.visibility}</dd></div>
+            </dl>
+          )}
         </>
       ) : null}
     </section>

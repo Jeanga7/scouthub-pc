@@ -5,6 +5,7 @@ import type {
 } from "@scouthub/application";
 import { ValidationError } from "@scouthub/application";
 import {
+  uuidSchema,
   projectListResponseSchema,
   projectOwnerOptionSchema,
   projectResponseSchema,
@@ -13,6 +14,7 @@ import {
   type ProjectResponse,
   type UpdateProjectDraftRequest
 } from "@scouthub/contracts";
+import { z } from "zod";
 import { requireActor } from "@/identity/http";
 import { handleRouteError, jsonResponse, requestId } from "@/organizations/http";
 
@@ -25,7 +27,15 @@ export async function requireProjectActor(
   return requireActor(request, currentRequestId);
 }
 
-export function mapProject(details: ProjectDetails): ProjectResponse {
+const projectCursorSchema = z.object({
+  updatedAt: z.iso.datetime(),
+  id: uuidSchema
+}).strict();
+
+export function mapProject(
+  details: ProjectDetails,
+  capabilities?: { readonly canUpdate: boolean }
+): ProjectResponse {
   return projectResponseSchema.parse({
     id: details.project.id,
     tenantId: details.project.tenantId,
@@ -52,6 +62,7 @@ export function mapProject(details: ProjectDetails): ProjectResponse {
       id: details.projectLead.id,
       displayName: details.projectLead.displayName
     },
+    ...(capabilities !== undefined && { capabilities }),
     version: details.project.version,
     createdAt: details.project.createdAt.toISOString(),
     updatedAt: details.project.updatedAt.toISOString()
@@ -63,7 +74,7 @@ export function mapProjectList(input: {
   readonly nextCursor: string | null;
 }): ProjectListResponse {
   return projectListResponseSchema.parse({
-    projects: input.projects.map(mapProject),
+    projects: input.projects.map((project) => mapProject(project)),
     nextCursor: input.nextCursor
   });
 }
@@ -165,10 +176,11 @@ export function decodeProjectCursor(value: string | undefined): {
     return null;
   }
   try {
-    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as {
-      readonly updatedAt: string;
-      readonly id: string;
-    };
+    const parsed = projectCursorSchema.parse(
+      JSON.parse(Buffer.from(value, "base64url").toString("utf8"))
+    );
+    // The cursor is opaque pagination state, not an authorization input; it is
+    // validated before hitting SQL so malformed values cannot become PG errors.
     return { updatedAt: new Date(parsed.updatedAt), id: parsed.id };
   } catch {
     throw new ValidationError("Project cursor is invalid.", "PROJECT_CURSOR_INVALID", 400);

@@ -1,5 +1,6 @@
 import type {
   OrganizationType,
+  Person,
   Project,
   ProjectMode,
   ProjectVisibility
@@ -90,6 +91,10 @@ export interface ProjectTransaction {
     tenantId: string,
     organizationId: string
   ): Promise<ProjectOwnerResource | null>;
+  findPersonForAccountInTenant(
+    tenantId: string,
+    accountId: string
+  ): Promise<Person | null>;
   findProjectById(tenantId: string, projectId: string): Promise<ProjectDetails | null>;
   listProjectsForScopes(input: {
     readonly tenantId: string;
@@ -117,4 +122,3 @@ export interface ProjectRepository {
     handler: (transaction: ProjectTransaction) => Promise<TResult>
   ): Promise<TResult>;
 }
-
