@@ -17,6 +17,7 @@
     "@scouthub/application": "workspace:*",
     "@scouthub/database": "workspace:*",
     "@scouthub/domain": "workspace:*",
+    "aws4fetch": "^1.0.20",
     "drizzle-orm": "^0.45.2",
     "pg": "^8.16.3",
     "pg-cloudflare": "^1.4.0"

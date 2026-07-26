@@ -8,6 +8,12 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
+  "r2_buckets": [
+    {
+      "binding": "EVIDENCE_BUCKET",
+      "bucket_name": "scouthub-pc-evidence"
+    }
+  ],
   "observability": {
     "enabled": true
   },

@@ -92,3 +92,32 @@ export {
   slice4EditableProjectStatuses,
   slice4ProjectTransitions
 } from "./project/project-workflow";
+export type {
+  EvidenceClassification,
+  EvidenceMime,
+  EvidenceRejectionCode,
+  EvidenceScanStatus,
+  EvidenceType,
+  EvidenceUploadStatus,
+  EvidenceValidationStatus,
+  EvidenceVisibility
+} from "./evidence/evidence";
+export {
+  assertEvidenceByteSize,
+  assertEvidenceClassification,
+  assertEvidenceExtension,
+  assertEvidenceMagicBytes,
+  assertEvidenceMime,
+  assertEvidenceMimeMatchesType,
+  assertEvidenceSha256Hex,
+  assertEvidenceVisibility,
+  assertSlice5EvidenceType,
+  assertUploadableProjectStatus,
+  evidenceDownloadUrlTtlSeconds,
+  EvidenceDomainError,
+  evidenceMaxImageBytes,
+  evidenceMaxPdfBytes,
+  evidenceUploadUrlTtlSeconds,
+  normalizeEvidenceDescription,
+  normalizeEvidenceTitle
+} from "./evidence/evidence";

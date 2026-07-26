@@ -36,6 +36,16 @@ export interface ProjectResource {
   readonly createdByAccountId: string;
 }
 
+export interface EvidenceResource {
+  readonly tenantId: string;
+  readonly projectId: string;
+  readonly ownerOrganizationId: string;
+  readonly ownerOrganizationPath: string;
+  readonly projectStatus: string;
+  readonly classification: "P1" | "P2" | "P3";
+  readonly createdByAccountId: string;
+}
+
 export interface PolicyContext {
   readonly now: Date;
 }
@@ -146,6 +156,46 @@ export function canAccessProject(
     // same-assignment invariant for project data.
     if (isResourceInScope(assignment, scopedOwner)) {
       return allow("PROJECT_OWNER_SCOPE_MATCH");
+    }
+  }
+
+  return deny("NO_MATCHING_ACTIVE_ASSIGNMENT");
+}
+
+export function canAccessEvidence(
+  actor: Actor,
+  action: Extract<PermissionCode, `evidence.${string}`>,
+  resource: EvidenceResource,
+  context: PolicyContext
+): AuthorizationDecision {
+  if (actor.account.status !== "ACTIVE") {
+    return deny(actor.account.status === "SUSPENDED" ? "ACCOUNT_SUSPENDED" : "ACCOUNT_NOT_ACTIVE");
+  }
+
+  const scopedOwner: OrganizationResource = {
+    tenantId: resource.tenantId,
+    organizationId: resource.ownerOrganizationId,
+    path: resource.ownerOrganizationPath
+  };
+
+  for (const assignment of actor.assignments) {
+    if (!isRoleAssignmentActive(assignment, context.now)) {
+      continue;
+    }
+    if (assignment.tenantId !== resource.tenantId) {
+      continue;
+    }
+    if (assignment.roleCode === "PLATFORM_ADMIN") {
+      continue;
+    }
+    if (!assignment.permissions.includes(action)) {
+      continue;
+    }
+    // Evidence authorization inherits Project ownership and must be satisfied
+    // by one active assignment. This keeps private files from gaining access via
+    // a permission/scope combination assembled from different assignments.
+    if (isResourceInScope(assignment, scopedOwner)) {
+      return allow("EVIDENCE_PROJECT_OWNER_SCOPE_MATCH");
     }
   }
 

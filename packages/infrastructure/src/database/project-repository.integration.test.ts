@@ -34,7 +34,7 @@ describe("PgProjectRepository", () => {
   beforeEach(async () => {
     const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
     try {
-      await pool.query("TRUNCATE audit_event, approval_decision, state_transition, project_comment, approval_request, project, role_assignment, account_invitation, account_person_link, account, person, organization RESTART IDENTITY CASCADE");
+      await pool.query("TRUNCATE audit_event, evidence, media_asset, approval_decision, state_transition, project_comment, approval_request, project, role_assignment, account_invitation, account_person_link, account, person, organization RESTART IDENTITY CASCADE");
       await seedBase(pool);
     } finally {
       await pool.end();
@@ -753,6 +753,92 @@ describe("PgProjectRepository", () => {
       cursor: null
     });
     expect(pendingOnly.items.map((item) => item.projectId)).toEqual([regionASecondProject]);
+  });
+
+  it("enforces Evidence media/project coherence and verified object immutability", async () => {
+    const useCases = createUseCases([ids.project, ids.projectTwo]);
+    await useCases.createProjectDraft({
+      actor: groupAdminActor(),
+      tenantId: ids.tenant,
+      ownerOrganizationId: ids.groupA,
+      title: "Jardin communautaire"
+    });
+    await useCases.createProjectDraft({
+      actor: groupBAdminActor(),
+      tenantId: ids.tenant,
+      ownerOrganizationId: ids.groupB,
+      title: "Nettoyage plage"
+    });
+
+    const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+    try {
+      const assetId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1";
+      await pool.query(
+        `INSERT INTO media_asset (
+          id, tenant_id, project_id, temporary_object_key, object_key, mime,
+          byte_size, sha256, etag, classification, upload_status, scan_status,
+          uploaded_by_account_id, upload_expires_at, verified_at
+        )
+        VALUES (
+          $1, $2, $3, $4, $5, 'image/jpeg',
+          3, $6, 'etag-1', 'P3', 'VERIFIED', 'NOT_SCANNED',
+          $7, $8, $8
+        )`,
+        [
+          assetId,
+          ids.tenant,
+          ids.project,
+          `tmp/evidence/${ids.tenant}/${assetId}/nonce`,
+          `evidence/${ids.tenant}/${assetId}/nonce`,
+          "a".repeat(64),
+          ids.account,
+          now
+        ]
+      );
+
+      await pool.query(
+        `INSERT INTO evidence (
+          id, tenant_id, project_id, media_asset_id, type, title,
+          visibility, validation_status, created_by_account_id
+        )
+        VALUES (
+          'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2', $1, $2, $3,
+          'PHOTO', 'Photo synthetique', 'PRIVATE', 'UNREVIEWED', $4
+        )`,
+        [ids.tenant, ids.project, assetId, ids.account]
+      );
+
+      await expect(pool.query(
+        `INSERT INTO evidence (
+          id, tenant_id, project_id, media_asset_id, type, title,
+          visibility, validation_status, created_by_account_id
+        )
+        VALUES (
+          'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee3', $1, $2, $3,
+          'PHOTO', 'Duplicate', 'PRIVATE', 'UNREVIEWED', $4
+        )`,
+        [ids.tenant, ids.project, assetId, ids.account]
+      )).rejects.toThrow();
+
+      await expect(pool.query(
+        `INSERT INTO evidence (
+          id, tenant_id, project_id, media_asset_id, type, title,
+          visibility, validation_status, created_by_account_id
+        )
+        VALUES (
+          'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee4', $1, $2, $3,
+          'PHOTO', 'Wrong project', 'PRIVATE', 'UNREVIEWED', $4
+        )`,
+        [ids.tenant, ids.projectTwo, assetId, ids.account]
+      )).rejects.toThrow();
+
+      await expect(pool.query(
+        "UPDATE media_asset SET object_key = 'evidence/changed' WHERE id = $1",
+        [assetId]
+      )).rejects.toThrow("immutable");
+    } finally {
+      await pool.end();
+    }
   });
 });
 

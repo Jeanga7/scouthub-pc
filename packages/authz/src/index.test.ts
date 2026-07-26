@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Account, PermissionCode, RoleCode } from "@scouthub/domain";
 import {
   canAccessOrganization,
+  canAccessEvidence,
   canAccessProject,
   canAccessScopedAction,
   validateSlice2RoleScope,
@@ -163,6 +164,75 @@ describe("organization policy engine", () => {
         ownerOrganizationPath: groupAPath,
         status: "DRAFT",
         createdByAccountId: "acct"
+      },
+      { now }
+    );
+
+    expect(decision.effect).toBe("deny");
+  });
+
+  it.each([
+    ["GroupAdmin Group A create own group", actor("GROUP_ADMIN", groupAPath, { permissions: ["evidence.create"] }), groupAPath, "evidence.create", "allow"],
+    ["GroupAdmin Group A download child unit", actor("GROUP_ADMIN", groupAPath, { permissions: ["evidence.download"] }), unitAPath, "evidence.download", "allow"],
+    ["GroupAdmin Group A denied sibling", actor("GROUP_ADMIN", groupAPath, { permissions: ["evidence.read"] }), groupBPath, "evidence.read", "deny"],
+    ["UnitLeader Unit A allowed unit", actor("UNIT_LEADER", unitAPath, { permissions: ["evidence.create"] }), unitAPath, "evidence.create", "allow"],
+    ["UnitLeader Unit A denied sibling", actor("UNIT_LEADER", unitAPath, { permissions: ["evidence.download"] }), `${groupAPath}aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9/`, "evidence.download", "deny"],
+    ["Programme reviewer read allowed", actor("REGIONAL_PROGRAMME_REVIEWER", regionAPath, { permissions: ["evidence.read"] }), groupAPath, "evidence.read", "allow"],
+    ["Programme reviewer create denied", actor("REGIONAL_PROGRAMME_REVIEWER", regionAPath, { permissions: ["evidence.read", "evidence.download"] }), groupAPath, "evidence.create", "deny"],
+    ["RegionalAdmin denied by default", actor("REGIONAL_ADMIN", regionAPath, { permissions: ["organization.read"] }), groupAPath, "evidence.read", "deny"],
+    ["PlatformAdmin denied", actor("PLATFORM_ADMIN", null, { permissions: ["evidence.download"] }), groupAPath, "evidence.download", "deny"]
+  ] as const)("%s", (_label, testActor, ownerPath, action, expected) => {
+    const decision = canAccessEvidence(
+      testActor,
+      action,
+      {
+        tenantId: tenantA,
+        projectId: "project-a",
+        ownerOrganizationId: ownerPath.split("/").filter(Boolean).at(-1) ?? tenantA,
+        ownerOrganizationPath: ownerPath,
+        projectStatus: "DRAFT",
+        classification: "P3",
+        createdByAccountId: "creator"
+      },
+      { now }
+    );
+
+    expect(decision.effect).toBe(expected);
+  });
+
+  it("does not combine evidence permission from one assignment with another scope", () => {
+    const regionBPath = `/${tenantA}/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9/`;
+    const baseActor = actor("GROUP_ADMIN", groupAPath, { permissions: ["evidence.download"] });
+    const baseAssignment = baseActor.assignments[0];
+    if (baseAssignment === undefined) {
+      throw new Error("Expected assignment.");
+    }
+    const testActor: Actor = {
+      ...baseActor,
+      assignments: [
+        baseAssignment,
+        {
+          ...baseAssignment,
+          id: "readonly-region-b",
+          roleCode: "REGIONAL_COMMS",
+          permissions: ["organization.read"],
+          scopeOrgId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9",
+          scopePath: regionBPath
+        }
+      ]
+    };
+
+    const decision = canAccessEvidence(
+      testActor,
+      "evidence.download",
+      {
+        tenantId: tenantA,
+        projectId: "project-b",
+        ownerOrganizationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9",
+        ownerOrganizationPath: regionBPath,
+        projectStatus: "DRAFT",
+        classification: "P3",
+        createdByAccountId: "creator"
       },
       { now }
     );

@@ -4,6 +4,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type {
+  EvidenceListResponse,
+  EvidenceResponse,
+  InitiateEvidenceUploadResponse,
   ProjectOwnerOption,
   ProjectReviewHistoryResponse,
   ReviewQueueResponse,
@@ -291,7 +294,11 @@ export function ProjectOverviewClient({ projectId, initialTenantId }: {
           <p className="eyebrow">{project.status}</p>
           <h1>{project.title}</h1>
           <p>{project.code} - {project.ownerOrganization.name}</p>
-          <p><a href={`/app/projects/${project.id}/reviews?tenantId=${project.tenantId}`}>Voir les retours</a></p>
+          <p>
+            <a href={`/app/projects/${project.id}/reviews?tenantId=${project.tenantId}`}>Voir les retours</a>
+            {" | "}
+            <a href={`/app/projects/${project.id}/evidence?tenantId=${project.tenantId}`}>Preuves</a>
+          </p>
           {statusMessage(project.status) !== null ? <p>{statusMessage(project.status)}</p> : null}
           {project.capabilities?.canSubmit === true ? (
             <button type="button" onClick={() => { void submitForReview(); }}>
@@ -385,6 +392,173 @@ export function ProjectReviewsClient({ projectId, initialTenantId }: {
         </div>
       ) : null}
     </section>
+  );
+}
+
+export function ProjectEvidenceClient({ projectId, initialTenantId }: {
+  readonly projectId: string;
+  readonly initialTenantId: string;
+}) {
+  const [items, setItems] = useState<EvidenceResponse[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [message, setMessage] = useState("Chargement...");
+
+  const load = useCallback(async (cursor?: string) => {
+    try {
+      const params = new URLSearchParams({ tenantId: initialTenantId, limit: "20" });
+      if (cursor !== undefined) {
+        params.set("cursor", cursor);
+      }
+      const response = await fetchJson<EvidenceListResponse>(
+        `/api/v1/projects/${projectId}/evidence?${params.toString()}`
+      );
+      setItems((current) => cursor === undefined ? response.items : [...current, ...response.items]);
+      setNextCursor(response.nextCursor);
+      setMessage(response.items.length === 0 ? "Aucune preuve." : "");
+    } catch {
+      setMessage("Preuves inaccessibles.");
+    }
+  }, [initialTenantId, projectId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function download(evidence: EvidenceResponse) {
+    setMessage("Preparation du telechargement...");
+    try {
+      const response = await postJson<{ readonly url: string; readonly expiresAt: string }>(
+        `/api/v1/projects/${projectId}/evidence/${evidence.id}/download-url`,
+        { tenantId: initialTenantId }
+      );
+      window.location.assign(response.url);
+    } catch {
+      setMessage("Telechargement refuse.");
+    }
+  }
+
+  return (
+    <section className="panel project-console">
+      <p className="eyebrow">Preuves</p>
+      <h1>Preuves du projet</h1>
+      {message.length > 0 ? <p role="status">{message}</p> : null}
+      <EvidenceUploader projectId={projectId} tenantId={initialTenantId} onUploaded={() => { void load(); }} />
+      <div className="project-list">
+        {items.map((item) => (
+          <article className="project-card" key={item.id}>
+            <h2>{item.title}</h2>
+            <p>{item.description ?? "Sans description."}</p>
+            <dl>
+              <div><dt>Type</dt><dd>{item.type}</dd></div>
+              <div><dt>Classification</dt><dd>{item.classification}</dd></div>
+              <div><dt>Taille</dt><dd>{formatBytes(item.media.bytes)}</dd></div>
+              <div><dt>Scan</dt><dd>{item.media.scanStatus}</dd></div>
+              <div><dt>Ajoutee</dt><dd>{item.createdAt}</dd></div>
+            </dl>
+            {item.capabilities?.canDownload === true ? (
+              <button type="button" onClick={() => { void download(item); }}>Telecharger</button>
+            ) : null}
+          </article>
+        ))}
+      </div>
+      {nextCursor !== null ? (
+        <button type="button" onClick={() => { void load(nextCursor); }}>Charger plus</button>
+      ) : null}
+    </section>
+  );
+}
+
+function EvidenceUploader({ projectId, tenantId, onUploaded }: {
+  readonly projectId: string;
+  readonly tenantId: string;
+  readonly onUploaded: () => void;
+}) {
+  const [message, setMessage] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+
+  async function upload(formData: FormData) {
+    if (file === null) {
+      setMessage("Choisir un fichier.");
+      return;
+    }
+    setMessage("Calcul SHA-256...");
+    try {
+      const sha256 = await sha256Hex(file);
+      setMessage("Demande URL d'upload...");
+      const initiated = await postJson<InitiateEvidenceUploadResponse>(
+        `/api/v1/projects/${projectId}/evidence/upload-url`,
+        {
+          tenantId,
+          filename: file.name,
+          mime: file.type,
+          bytes: file.size,
+          sha256,
+          classification: requiredFormString(formData, "classification")
+        }
+      );
+      setMessage("Upload direct...");
+      const put = await fetch(initiated.upload.url, {
+        method: initiated.upload.method,
+        headers: initiated.upload.requiredHeaders,
+        body: file
+      });
+      if (!put.ok) {
+        throw new Error("Upload failed.");
+      }
+      setMessage("Verification...");
+      await postJson<EvidenceResponse>(
+        `/api/v1/projects/${projectId}/evidence/uploads/${initiated.assetId}/confirm`,
+        {
+          tenantId,
+          type: requiredFormString(formData, "type"),
+          title: requiredFormString(formData, "title"),
+          description: emptyToNull(formData.get("description")),
+          visibility: requiredFormString(formData, "visibility")
+        }
+      );
+      setMessage("Preuve ajoutee.");
+      onUploaded();
+    } catch {
+      setMessage("Upload refuse ou impossible.");
+    }
+  }
+
+  return (
+    <form className="project-form" action={upload}>
+      <label htmlFor="evidenceFile">Fichier JPEG, PNG ou PDF</label>
+      <input
+        id="evidenceFile"
+        name="file"
+        type="file"
+        accept="image/jpeg,image/png,application/pdf"
+        onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+      />
+      {file !== null ? <p>{file.name} - {file.type} - {formatBytes(file.size)}</p> : null}
+      <label htmlFor="evidenceType">Type</label>
+      <select id="evidenceType" name="type">
+        <option value="PHOTO">Photo</option>
+        <option value="DOCUMENT">Document</option>
+        <option value="ATTESTATION">Attestation</option>
+        <option value="EXTERNAL_CAPTURE">Capture externe</option>
+      </select>
+      <label htmlFor="evidenceTitle">Titre</label>
+      <input id="evidenceTitle" name="title" required maxLength={160} />
+      <label htmlFor="evidenceDescription">Description</label>
+      <textarea id="evidenceDescription" name="description" maxLength={2000} />
+      <label htmlFor="evidenceClassification">Classification</label>
+      <select id="evidenceClassification" name="classification" defaultValue="P3">
+        <option value="P1">P1</option>
+        <option value="P2">P2</option>
+        <option value="P3">P3</option>
+      </select>
+      <label htmlFor="evidenceVisibility">Visibilite</label>
+      <select id="evidenceVisibility" name="visibility" defaultValue="PRIVATE">
+        <option value="PRIVATE">Private</option>
+        <option value="INTERNAL">Internal</option>
+      </select>
+      <button type="submit">Uploader la preuve</button>
+      {message.length > 0 ? <p role="status">{message}</p> : null}
+    </form>
   );
 }
 
@@ -628,4 +802,21 @@ function formValueForProjectPatch(key: string, value: FormDataEntryValue): strin
     return new Date(value).toISOString();
   }
   return value;
+}
+
+async function sha256Hex(file: File): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KiB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }
