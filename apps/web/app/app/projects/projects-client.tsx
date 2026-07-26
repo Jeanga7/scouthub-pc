@@ -5,6 +5,8 @@
 import { useCallback, useEffect, useState } from "react";
 import type {
   ProjectOwnerOption,
+  ProjectReviewHistoryResponse,
+  ReviewQueueResponse,
   ProjectResponse
 } from "@scouthub/contracts";
 
@@ -75,6 +77,7 @@ export function ProjectsListClient() {
             <div>
               <h2><a href={`/app/projects/${project.id}/overview?tenantId=${project.tenantId}`}>{project.title}</a></h2>
               <p>{project.summary ?? "Brouillon sans resume."}</p>
+              <p><a href={`/app/projects/${project.id}/reviews?tenantId=${project.tenantId}`}>Historique de revue</a></p>
             </div>
             <dl>
               <div><dt>Code</dt><dd>{project.code}</dd></div>
@@ -263,6 +266,23 @@ export function ProjectOverviewClient({ projectId, initialTenantId }: {
     }
   }
 
+  async function submitForReview() {
+    if (project === null) {
+      return;
+    }
+    setMessage("Soumission...");
+    try {
+      const response = await postJson<{ readonly project: ProjectResponse }>(
+        `/api/v1/projects/${project.id}/submit`,
+        { tenantId: project.tenantId, expectedVersion: project.version }
+      );
+      setProject(response.project);
+      setMessage("Projet soumis pour revue.");
+    } catch {
+      setMessage("Soumission refusee.");
+    }
+  }
+
   return (
     <section className="panel project-console">
       {message.length > 0 ? <p role="status">{message}</p> : null}
@@ -271,6 +291,13 @@ export function ProjectOverviewClient({ projectId, initialTenantId }: {
           <p className="eyebrow">{project.status}</p>
           <h1>{project.title}</h1>
           <p>{project.code} - {project.ownerOrganization.name}</p>
+          <p><a href={`/app/projects/${project.id}/reviews?tenantId=${project.tenantId}`}>Voir les retours</a></p>
+          {statusMessage(project.status) !== null ? <p>{statusMessage(project.status)}</p> : null}
+          {project.capabilities?.canSubmit === true ? (
+            <button type="button" onClick={() => { void submitForReview(); }}>
+              {project.status === "CHANGES_REQUESTED" ? "Resoumettre" : "Soumettre pour revue"}
+            </button>
+          ) : null}
           {project.capabilities?.canUpdate === true ? (
             <form className="project-form" action={save}>
               <label htmlFor="title">Titre</label>
@@ -300,6 +327,222 @@ export function ProjectOverviewClient({ projectId, initialTenantId }: {
             </dl>
           )}
         </>
+      ) : null}
+    </section>
+  );
+}
+
+export function ProjectReviewsClient({ projectId, initialTenantId }: {
+  readonly projectId: string;
+  readonly initialTenantId: string;
+}) {
+  const [history, setHistory] = useState<ProjectReviewHistoryResponse | null>(null);
+  const [message, setMessage] = useState("Chargement...");
+
+  const load = useCallback(async () => {
+    try {
+      const loaded = await fetchJson<ProjectReviewHistoryResponse>(
+        `/api/v1/projects/${projectId}/reviews?tenantId=${initialTenantId}`
+      );
+      setHistory(loaded);
+      setMessage("");
+    } catch {
+      setMessage("Historique inaccessible.");
+    }
+  }, [initialTenantId, projectId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  return (
+    <section className="panel project-console">
+      <p className="eyebrow">Revue</p>
+      <h1>Historique du projet</h1>
+      {message.length > 0 ? <p role="status">{message}</p> : null}
+      {history !== null && history.cycles.length === 0 ? <p>Aucun cycle de revue.</p> : null}
+      {history?.cycles.map((cycle, index) => (
+        <article className="project-card" key={cycle.approvalRequest.id}>
+          <h2>Cycle {index + 1}</h2>
+          <dl>
+            <div><dt>Statut</dt><dd>{cycle.approvalRequest.status}</dd></div>
+            <div><dt>Version soumise</dt><dd>{cycle.approvalRequest.submittedProjectVersion}</dd></div>
+            <div><dt>Soumis le</dt><dd>{cycle.approvalRequest.requestedAt}</dd></div>
+          </dl>
+          {cycle.comments.map((comment) => (
+            <p key={comment.id}><strong>{comment.kind}</strong> {comment.fieldKey ?? ""}: {comment.body}</p>
+          ))}
+          {cycle.decision !== null ? (
+            <p>Decision: {cycle.decision.decision}{cycle.decision.reason !== null ? ` - ${cycle.decision.reason}` : ""}</p>
+          ) : null}
+        </article>
+      ))}
+      {history !== null ? (
+        <div className="project-list">
+          {history.transitions.map((transition) => (
+            <p key={transition.id}>{transition.fromState} {"->"} {transition.toState} ({transition.occurredAt})</p>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+export function ReviewsQueueClient() {
+  const [tenantId, setTenantId] = useState("");
+  const [queue, setQueue] = useState<ReviewQueueResponse["items"]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [message, setMessage] = useState("Chargement...");
+
+  const load = useCallback(async (cursor?: string) => {
+    try {
+      const me = await fetchJson<MeResponse>("/api/v1/me");
+      const assignment = me.roleAssignments.find((item) =>
+        item.permissions.includes("project.review")
+      );
+      if (assignment === undefined) {
+        setMessage("Aucune revue regionale accessible.");
+        return;
+      }
+      setTenantId(assignment.tenantId);
+      const params = new URLSearchParams({ tenantId: assignment.tenantId, limit: "20", status: "PENDING" });
+      if (cursor !== undefined) {
+        params.set("cursor", cursor);
+      }
+      const response = await fetchJson<ReviewQueueResponse>(`/api/v1/reviews?${params.toString()}`);
+      setQueue((current) => cursor === undefined ? response.items : [...current, ...response.items]);
+      setNextCursor(response.nextCursor);
+      setMessage(response.items.length === 0 ? "Aucun dossier en revue." : "");
+    } catch {
+      setMessage("Impossible de charger la file de revue.");
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function startReview(item: ReviewQueueResponse["items"][number]) {
+    setMessage("Demarrage de la revue...");
+    try {
+      await postJson<ProjectResponse>(`/api/v1/projects/${item.projectId}/review/start`, {
+        tenantId,
+        approvalRequestId: item.approvalRequestId,
+        expectedVersion: item.projectVersion
+      });
+      setMessage("Revue demarree.");
+      await load();
+    } catch {
+      setMessage("Demarrage refuse.");
+    }
+  }
+
+  async function decide(item: ReviewQueueResponse["items"][number], action: "approve" | "request-changes" | "reject", formData: FormData) {
+    if (
+      (action === "approve" && !window.confirm("Confirmer l'approbation pour execution ?")) ||
+      (action === "reject" && !window.confirm("Confirmer le rejet du projet ?"))
+    ) {
+      return;
+    }
+    setMessage("Decision en cours...");
+    try {
+      await postJson<ProjectResponse>(`/api/v1/projects/${item.projectId}/review/${action}`, {
+        tenantId,
+        approvalRequestId: item.approvalRequestId,
+        expectedVersion: item.projectVersion,
+        ...(action !== "approve" && { reason: requiredFormString(formData, "reason") }),
+        ...(action === "approve" && { reason: emptyToNull(formData.get("reason")) })
+      });
+      setMessage("Decision enregistree.");
+      await load();
+    } catch {
+      setMessage("Decision refusee.");
+    }
+  }
+
+  async function comment(item: ReviewQueueResponse["items"][number], formData: FormData) {
+    setMessage("Ajout du commentaire...");
+    try {
+      await postJson(`/api/v1/projects/${item.projectId}/comments`, {
+        tenantId,
+        approvalRequestId: item.approvalRequestId,
+        kind: requiredFormString(formData, "kind"),
+        fieldKey: emptyToNull(formData.get("fieldKey")),
+        body: requiredFormString(formData, "body")
+      });
+      setMessage("Commentaire ajoute.");
+    } catch {
+      setMessage("Commentaire refuse.");
+    }
+  }
+
+  return (
+    <section className="panel project-console">
+      <p className="eyebrow">Revue regionale</p>
+      <h1>Dossiers a examiner</h1>
+      {message.length > 0 ? <p role="status">{message}</p> : null}
+      <div className="project-list">
+        {queue.map((item) => (
+          <article className="project-card" key={item.approvalRequestId}>
+            <h2><a href={`/app/projects/${item.projectId}/overview?tenantId=${tenantId}`}>{item.title}</a></h2>
+            <dl>
+              <div><dt>Code</dt><dd>{item.code}</dd></div>
+              <div><dt>Organisation</dt><dd>{item.ownerOrganization.name}</dd></div>
+              <div><dt>Statut</dt><dd>{item.projectStatus}</dd></div>
+              <div><dt>Soumis le</dt><dd>{item.requestedAt}</dd></div>
+            </dl>
+            {item.capabilities?.canStartReview === true ? (
+              <button type="button" onClick={() => { void startReview(item); }}>Commencer la revue</button>
+            ) : null}
+            {item.projectStatus === "IN_REVIEW" ? (
+              <>
+                {item.capabilities?.canComment === true ? (
+                <form className="project-form" action={(data) => comment(item, data)}>
+                  <label htmlFor={`kind-${item.approvalRequestId}`}>Type de commentaire</label>
+                  <select id={`kind-${item.approvalRequestId}`} name="kind">
+                    <option value="GLOBAL">Global</option>
+                    <option value="FIELD">Champ</option>
+                  </select>
+                  <label htmlFor={`field-${item.approvalRequestId}`}>Champ</label>
+                  <select id={`field-${item.approvalRequestId}`} name="fieldKey">
+                    <option value="">Aucun</option>
+                    <option value="problemStatement">Probleme observe</option>
+                    <option value="diagnostic">Diagnostic</option>
+                    <option value="summary">Resume</option>
+                  </select>
+                  <label htmlFor={`comment-${item.approvalRequestId}`}>Commentaire</label>
+                  <textarea id={`comment-${item.approvalRequestId}`} name="body" required maxLength={4000} />
+                  <button type="submit">Ajouter le commentaire</button>
+                </form>
+                ) : null}
+                {item.capabilities?.canRequestChanges === true ? (
+                <form className="project-form" action={(data) => decide(item, "request-changes", data)}>
+                  <label htmlFor={`changes-${item.approvalRequestId}`}>Motif des corrections</label>
+                  <textarea id={`changes-${item.approvalRequestId}`} name="reason" required maxLength={4000} />
+                  <button type="submit">Demander modifications</button>
+                </form>
+                ) : null}
+                {item.capabilities?.canApprove === true ? (
+                <form className="project-form" action={(data) => decide(item, "approve", data)}>
+                  <label htmlFor={`approve-${item.approvalRequestId}`}>Note optionnelle</label>
+                  <textarea id={`approve-${item.approvalRequestId}`} name="reason" maxLength={4000} />
+                  <button type="submit">Approuver pour execution</button>
+                </form>
+                ) : null}
+                {item.capabilities?.canReject === true ? (
+                <form className="project-form" action={(data) => decide(item, "reject", data)}>
+                  <label htmlFor={`reject-${item.approvalRequestId}`}>Motif du rejet</label>
+                  <textarea id={`reject-${item.approvalRequestId}`} name="reason" required maxLength={4000} />
+                  <button type="submit">Rejeter</button>
+                </form>
+                ) : null}
+              </>
+            ) : null}
+          </article>
+        ))}
+      </div>
+      {nextCursor !== null ? (
+        <button type="button" onClick={() => { void load(nextCursor); }}>Charger plus</button>
       ) : null}
     </section>
   );
@@ -338,6 +581,23 @@ async function patchJson<T>(url: string, payload: unknown): Promise<T> {
   }
   const body = await response.json() as { readonly data: T };
   return body.data;
+}
+
+function statusMessage(status: ProjectResponse["status"]): string | null {
+  switch (status) {
+    case "READY_FOR_REVIEW":
+      return "En attente de revue regionale.";
+    case "IN_REVIEW":
+      return "Revue regionale en cours.";
+    case "CHANGES_REQUESTED":
+      return "Modifications demandees.";
+    case "APPROVED_FOR_EXECUTION":
+      return "Approuve pour execution.";
+    case "REJECTED":
+      return "Projet rejete.";
+    default:
+      return null;
+  }
 }
 
 function emptyToNull(value: FormDataEntryValue | null): string | null {

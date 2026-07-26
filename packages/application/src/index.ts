@@ -29,14 +29,20 @@ export type {
   OrganizationTransaction
 } from "./ports/organization-repository";
 export type {
+  ApprovalDecisionRecord,
+  ApprovalRequestRecord,
   ProjectDetails,
+  ProjectCommentRecord,
   ProjectInsert,
   ProjectListPage,
   ProjectOwnerOption,
   ProjectOwnerResource,
   ProjectPatch,
+  ProjectReviewHistory,
   ProjectRepository,
-  ProjectTransaction
+  ProjectTransaction,
+  ReviewQueuePage,
+  StateTransitionRecord
 } from "./ports/project-repository";
 export {
   ApplicationError,
@@ -70,6 +76,10 @@ export {
 } from "./identity/use-cases";
 export {
   ProjectUseCases,
+  type AddProjectCommentInput,
   type CreateProjectDraftInput,
+  type ProjectDecisionInput,
+  type ProjectReviewInput,
+  type ProjectWorkflowInput,
   type UpdateProjectDraftInput
 } from "./project/use-cases";

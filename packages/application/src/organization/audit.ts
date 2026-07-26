@@ -20,7 +20,13 @@ export const identityAuditActions = [
 
 export const projectAuditActions = [
   "project.created",
-  "project.updated"
+  "project.updated",
+  "project.submitted_for_review",
+  "project.review_started",
+  "project.comment_added",
+  "project.changes_requested",
+  "project.approved_for_execution",
+  "project.rejected"
 ] as const;
 
 export type OrganizationAuditAction = (typeof organizationAuditActions)[number];

@@ -27,7 +27,13 @@ export type PermissionCode =
   | "audit.read"
   | "project.create"
   | "project.read"
-  | "project.update";
+  | "project.update"
+  | "project.submit"
+  | "project.comment"
+  | "project.review"
+  | "project.request_changes"
+  | "project.approve"
+  | "project.reject";
 
 export type RoleScopeType =
   | "OWN"

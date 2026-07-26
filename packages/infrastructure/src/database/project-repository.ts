@@ -6,10 +6,14 @@ import type {
   Person,
   Project,
   ProjectMode,
+  ProjectStatus,
   ProjectVisibility
 } from "@scouthub/domain";
 import type {
+  ApprovalDecisionRecord,
+  ApprovalRequestRecord,
   AuditEventInput,
+  ProjectCommentRecord,
   ProjectDetails,
   ProjectInsert,
   ProjectListPage,
@@ -17,7 +21,10 @@ import type {
   ProjectOwnerResource,
   ProjectPatch,
   ProjectRepository,
-  ProjectTransaction
+  ProjectReviewHistory,
+  ProjectTransaction,
+  ReviewQueuePage,
+  StateTransitionRecord
 } from "@scouthub/application";
 import { ConflictError } from "@scouthub/application";
 
@@ -59,6 +66,7 @@ type ProjectDetailsRow = ProjectRow & {
   owner_status: ProjectOwnerResource["status"];
   owner_path: string;
   lead_display_name: string;
+  lead_status: "ACTIVE" | "INACTIVE" | "ANONYMIZED";
 };
 
 type OwnerRow = QueryResultRow & {
@@ -81,6 +89,70 @@ type PersonRow = QueryResultRow & {
   status: Person["status"];
   created_at: Date;
   updated_at: Date;
+};
+
+type ApprovalRequestRow = QueryResultRow & {
+  id: string;
+  tenant_id: string;
+  resource_id: string;
+  status: ApprovalRequestRecord["status"];
+  submitted_project_version: number;
+  requested_by_account_id: string;
+  requested_at: Date;
+  resolved_at: Date | null;
+};
+
+type ApprovalDecisionRow = QueryResultRow & {
+  id: string;
+  tenant_id: string;
+  request_id: string;
+  reviewer_account_id: string;
+  decision: ApprovalDecisionRecord["decision"];
+  reason: string | null;
+  decided_at: Date;
+};
+
+type StateTransitionRow = QueryResultRow & {
+  id: string;
+  tenant_id: string;
+  entity_id: string;
+  from_state: ProjectStatus;
+  to_state: ProjectStatus;
+  actor_account_id: string;
+  approval_request_id: string | null;
+  reason: string | null;
+  occurred_at: Date;
+};
+
+type ProjectCommentRow = QueryResultRow & {
+  id: string;
+  tenant_id: string;
+  project_id: string;
+  approval_request_id: string;
+  author_account_id: string;
+  kind: ProjectCommentRecord["kind"];
+  field_key: string | null;
+  body: string;
+  created_at: Date;
+};
+
+type ReviewQueueRow = QueryResultRow & {
+  tenant_id: string;
+  approval_request_id: string;
+  project_id: string;
+  code: string;
+  title: string;
+  owner_org_id: string;
+  owner_name: string;
+  owner_type: "GROUP" | "UNIT";
+  owner_path: string;
+  project_status: ProjectStatus;
+  project_version: number;
+  created_by_account_id: string;
+  requested_at: Date;
+  requested_by_account_id: string;
+  submitted_project_version: number;
+  is_resubmission: boolean;
 };
 
 export function createPgProjectRepository(databaseUrl: string): ProjectRepository {
@@ -151,6 +223,31 @@ class PgProjectTransaction implements ProjectTransaction {
       [tenantId, projectId]
     );
     return result.rows[0] === undefined ? null : mapProjectDetails(result.rows[0]);
+  }
+
+  async findProjectByIdForUpdate(tenantId: string, projectId: string): Promise<ProjectDetails | null> {
+    const result = await this.db.query<ProjectDetailsRow>(
+      `${projectDetailsSelect()}
+       WHERE p.tenant_id = $1 AND p.id = $2
+       FOR UPDATE OF p`,
+      [tenantId, projectId]
+    );
+    return result.rows[0] === undefined ? null : mapProjectDetails(result.rows[0]);
+  }
+
+  async findApprovalRequestByIdForUpdate(
+    tenantId: string,
+    approvalRequestId: string
+  ): Promise<ApprovalRequestRecord | null> {
+    const result = await this.db.query<ApprovalRequestRow>(
+      `SELECT id, tenant_id, resource_id, status, submitted_project_version,
+              requested_by_account_id, requested_at, resolved_at
+       FROM approval_request
+       WHERE tenant_id = $1 AND id = $2
+       FOR UPDATE`,
+      [tenantId, approvalRequestId]
+    );
+    return result.rows[0] === undefined ? null : mapApprovalRequest(result.rows[0]);
   }
 
   async listProjectsForScopes(input: {
@@ -309,6 +406,300 @@ class PgProjectTransaction implements ProjectTransaction {
     return this.findProjectById(tenantId, projectId);
   }
 
+  async updateProjectStatus(input: {
+    readonly tenantId: string;
+    readonly projectId: string;
+    readonly expectedVersion: number;
+    readonly fromStatus: ProjectStatus;
+    readonly toStatus: ProjectStatus;
+  }): Promise<ProjectDetails | null> {
+    const result = await this.db.query(
+      `UPDATE project
+       SET status = $5::project_status,
+           version = version + 1,
+           updated_at = now()
+       WHERE tenant_id = $1
+         AND id = $2
+         AND version = $3
+         AND status = $4::project_status`,
+      [input.tenantId, input.projectId, input.expectedVersion, input.fromStatus, input.toStatus]
+    );
+    if (result.rowCount !== 1) {
+      return null;
+    }
+    return this.findProjectById(input.tenantId, input.projectId);
+  }
+
+  async createApprovalRequest(input: {
+    readonly id: string;
+    readonly tenantId: string;
+    readonly projectId: string;
+    readonly submittedProjectVersion: number;
+    readonly requestedByAccountId: string;
+    readonly requestedAt: Date;
+  }): Promise<ApprovalRequestRecord> {
+    const result = await catchWorkflowConflict(() =>
+      this.db.query<ApprovalRequestRow>(
+        `INSERT INTO approval_request (
+          id, tenant_id, resource_id, submitted_project_version,
+          requested_by_account_id, requested_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id, tenant_id, resource_id, status, submitted_project_version,
+                  requested_by_account_id, requested_at, resolved_at`,
+        [
+          input.id,
+          input.tenantId,
+          input.projectId,
+          input.submittedProjectVersion,
+          input.requestedByAccountId,
+          input.requestedAt
+        ]
+      )
+    );
+    return mapApprovalRequest(requireReturnedRow(result.rows[0], "Expected created approval request."));
+  }
+
+  async resolveApprovalRequest(input: {
+    readonly tenantId: string;
+    readonly approvalRequestId: string;
+    readonly status: "APPROVED" | "CHANGES_REQUESTED" | "REJECTED";
+    readonly resolvedAt: Date;
+  }): Promise<ApprovalRequestRecord | null> {
+    const result = await this.db.query<ApprovalRequestRow>(
+      `UPDATE approval_request
+       SET status = $3::approval_request_status,
+           resolved_at = $4,
+           updated_at = now()
+       WHERE tenant_id = $1
+         AND id = $2
+         AND status = 'PENDING'
+       RETURNING id, tenant_id, resource_id, status, submitted_project_version,
+                 requested_by_account_id, requested_at, resolved_at`,
+      [input.tenantId, input.approvalRequestId, input.status, input.resolvedAt]
+    );
+    return result.rows[0] === undefined ? null : mapApprovalRequest(result.rows[0]);
+  }
+
+  async appendApprovalDecision(input: {
+    readonly id: string;
+    readonly tenantId: string;
+    readonly approvalRequestId: string;
+    readonly reviewerAccountId: string;
+    readonly decision: "APPROVED" | "CHANGES_REQUESTED" | "REJECTED";
+    readonly reason: string | null;
+    readonly decidedAt: Date;
+  }): Promise<ApprovalDecisionRecord> {
+    const result = await catchWorkflowConflict(() =>
+      this.db.query<ApprovalDecisionRow>(
+        `INSERT INTO approval_decision (
+          id, tenant_id, request_id, reviewer_account_id, decision, reason, decided_at
+        )
+        VALUES ($1, $2, $3, $4, $5::approval_decision_type, $6, $7)
+        RETURNING id, tenant_id, request_id, reviewer_account_id, decision, reason, decided_at`,
+        [
+          input.id,
+          input.tenantId,
+          input.approvalRequestId,
+          input.reviewerAccountId,
+          input.decision,
+          input.reason,
+          input.decidedAt
+        ]
+      )
+    );
+    return mapApprovalDecision(requireReturnedRow(result.rows[0], "Expected created approval decision."));
+  }
+
+  async appendStateTransition(input: {
+    readonly id: string;
+    readonly tenantId: string;
+    readonly projectId: string;
+    readonly fromState: ProjectStatus;
+    readonly toState: ProjectStatus;
+    readonly actorAccountId: string;
+    readonly approvalRequestId: string | null;
+    readonly reason: string | null;
+    readonly occurredAt: Date;
+  }): Promise<StateTransitionRecord> {
+    const result = await this.db.query<StateTransitionRow>(
+      `INSERT INTO state_transition (
+        id, tenant_id, entity_id, from_state, to_state,
+        actor_account_id, approval_request_id, reason, occurred_at
+      )
+      VALUES ($1, $2, $3, $4::project_status, $5::project_status, $6, $7, $8, $9)
+      RETURNING id, tenant_id, entity_id, from_state, to_state,
+                actor_account_id, approval_request_id, reason, occurred_at`,
+      [
+        input.id,
+        input.tenantId,
+        input.projectId,
+        input.fromState,
+        input.toState,
+        input.actorAccountId,
+        input.approvalRequestId,
+        input.reason,
+        input.occurredAt
+      ]
+    );
+    return mapStateTransition(requireReturnedRow(result.rows[0], "Expected created state transition."));
+  }
+
+  async appendProjectComment(input: {
+    readonly id: string;
+    readonly tenantId: string;
+    readonly projectId: string;
+    readonly approvalRequestId: string;
+    readonly authorAccountId: string;
+    readonly kind: "GLOBAL" | "FIELD";
+    readonly fieldKey: string | null;
+    readonly body: string;
+    readonly createdAt: Date;
+  }): Promise<ProjectCommentRecord> {
+    const result = await this.db.query<ProjectCommentRow>(
+      `INSERT INTO project_comment (
+        id, tenant_id, project_id, approval_request_id,
+        author_account_id, kind, field_key, body, created_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6::project_comment_kind, $7, $8, $9)
+      RETURNING id, tenant_id, project_id, approval_request_id,
+                author_account_id, kind, field_key, body, created_at`,
+      [
+        input.id,
+        input.tenantId,
+        input.projectId,
+        input.approvalRequestId,
+        input.authorAccountId,
+        input.kind,
+        input.fieldKey,
+        input.body,
+        input.createdAt
+      ]
+    );
+    return mapProjectComment(requireReturnedRow(result.rows[0], "Expected created project comment."));
+  }
+
+  async findLatestApprovalRequestForProject(
+    tenantId: string,
+    projectId: string
+  ): Promise<ApprovalRequestRecord | null> {
+    const result = await this.db.query<ApprovalRequestRow>(
+      `SELECT id, tenant_id, resource_id, status, submitted_project_version,
+              requested_by_account_id, requested_at, resolved_at
+       FROM approval_request
+       WHERE tenant_id = $1 AND resource_id = $2
+       ORDER BY submitted_project_version DESC, id DESC
+       LIMIT 1`,
+      [tenantId, projectId]
+    );
+    return result.rows[0] === undefined ? null : mapApprovalRequest(result.rows[0]);
+  }
+
+  async listReviewQueueForScopes(input: {
+    readonly tenantId: string;
+    readonly scopePaths: readonly string[];
+    readonly limit: number;
+    readonly cursor: { readonly requestedAt: Date; readonly id: string } | null;
+    readonly status?: ApprovalRequestRecord["status"];
+  }): Promise<ReviewQueuePage> {
+    const values: unknown[] = [input.tenantId, input.scopePaths, input.limit + 1];
+    const predicates = [
+      "ar.tenant_id = $1",
+      "EXISTS (SELECT 1 FROM unnest($2::text[]) AS scope_path WHERE o.path LIKE scope_path || '%')"
+    ];
+    if (input.cursor !== null) {
+      values.push(input.cursor.requestedAt, input.cursor.id);
+      predicates.push(`(ar.requested_at, ar.id) > ($${values.length - 1}::timestamptz, $${values.length}::uuid)`);
+    }
+    if (input.status !== undefined) {
+      values.push(input.status);
+      predicates.push(`ar.status = $${values.length}::approval_request_status`);
+    }
+
+    const result = await this.db.query<ReviewQueueRow>(
+      `SELECT
+         ar.id AS approval_request_id,
+         ar.tenant_id,
+         p.id AS project_id,
+         p.code,
+         p.title,
+         o.id AS owner_org_id,
+         o.name AS owner_name,
+         o.type AS owner_type,
+         o.path AS owner_path,
+         p.status AS project_status,
+         p.version AS project_version,
+         p.created_by_account_id,
+         ar.requested_at,
+         ar.requested_by_account_id,
+         ar.submitted_project_version,
+         EXISTS (
+           SELECT 1
+           FROM approval_request previous
+           WHERE previous.tenant_id = ar.tenant_id
+             AND previous.resource_id = ar.resource_id
+             AND previous.requested_at < ar.requested_at
+         ) AS is_resubmission
+       FROM approval_request ar
+       JOIN project p ON p.id = ar.resource_id AND p.tenant_id = ar.tenant_id
+       JOIN organization o ON o.id = p.owner_org_id AND o.tenant_id = p.tenant_id
+       WHERE ${predicates.join(" AND ")}
+       ORDER BY ar.requested_at ASC, ar.id ASC
+       LIMIT $3`,
+      values
+    );
+    const rows = result.rows.slice(0, input.limit);
+    const last = rows.at(-1);
+    return {
+      items: rows.map(mapReviewQueueItem),
+      nextCursor: result.rows.length > input.limit && last !== undefined
+        ? { requestedAt: last.requested_at, id: last.approval_request_id }
+        : null
+    };
+  }
+
+  async listProjectReviewHistory(tenantId: string, projectId: string): Promise<ProjectReviewHistory> {
+    const requests = await this.db.query<ApprovalRequestRow>(
+      `SELECT id, tenant_id, resource_id, status, submitted_project_version,
+              requested_by_account_id, requested_at, resolved_at
+       FROM approval_request
+       WHERE tenant_id = $1 AND resource_id = $2
+       ORDER BY requested_at ASC, id ASC`,
+      [tenantId, projectId]
+    );
+    const decisions = await this.db.query<ApprovalDecisionRow>(
+      `SELECT d.id, d.tenant_id, d.request_id, d.reviewer_account_id,
+              d.decision, d.reason, d.decided_at
+       FROM approval_decision d
+       JOIN approval_request ar ON ar.id = d.request_id AND ar.tenant_id = d.tenant_id
+       WHERE ar.tenant_id = $1 AND ar.resource_id = $2
+       ORDER BY d.decided_at ASC, d.id ASC`,
+      [tenantId, projectId]
+    );
+    const comments = await this.db.query<ProjectCommentRow>(
+      `SELECT id, tenant_id, project_id, approval_request_id,
+              author_account_id, kind, field_key, body, created_at
+       FROM project_comment
+       WHERE tenant_id = $1 AND project_id = $2
+       ORDER BY created_at ASC, id ASC`,
+      [tenantId, projectId]
+    );
+    const transitions = await this.db.query<StateTransitionRow>(
+      `SELECT id, tenant_id, entity_id, from_state, to_state,
+              actor_account_id, approval_request_id, reason, occurred_at
+       FROM state_transition
+       WHERE tenant_id = $1 AND entity_id = $2
+       ORDER BY occurred_at ASC, id ASC`,
+      [tenantId, projectId]
+    );
+    return {
+      requests: requests.rows.map(mapApprovalRequest),
+      decisions: decisions.rows.map(mapApprovalDecision),
+      comments: comments.rows.map(mapProjectComment),
+      transitions: transitions.rows.map(mapStateTransition)
+    };
+  }
+
   async appendAuditEvent(input: AuditEventInput): Promise<void> {
     await this.db.query(
       `INSERT INTO audit_event (
@@ -339,7 +730,8 @@ function projectDetailsSelect(): string {
     o.type AS owner_type,
     o.status AS owner_status,
     o.path AS owner_path,
-    lead.display_name AS lead_display_name
+    lead.display_name AS lead_display_name,
+    lead.status AS lead_status
    FROM project p
    JOIN organization o ON o.id = p.owner_org_id AND o.tenant_id = p.tenant_id
    JOIN person lead ON lead.id = p.project_lead_person_id AND lead.tenant_id = p.tenant_id`;
@@ -373,7 +765,8 @@ function mapProjectDetails(row: ProjectDetailsRow): ProjectDetails {
     },
     projectLead: {
       id: row.project_lead_person_id,
-      displayName: row.lead_display_name
+      displayName: row.lead_display_name,
+      status: row.lead_status
     }
   };
 }
@@ -447,6 +840,98 @@ async function catchProjectUniqueConflict<TResult>(
   }
 }
 
+async function catchWorkflowConflict<TResult>(
+  operation: () => Promise<TResult>
+): Promise<TResult> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (
+      hasConstraint(error, "approval_request_one_pending_project_stage_unique") ||
+      hasConstraint(error, "approval_decision_request_unique")
+    ) {
+      throw new ConflictError("Project review state changed concurrently.");
+    }
+    throw error;
+  }
+}
+
+function mapApprovalRequest(row: ApprovalRequestRow): ApprovalRequestRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    projectId: row.resource_id,
+    status: row.status,
+    submittedProjectVersion: row.submitted_project_version,
+    requestedByAccountId: row.requested_by_account_id,
+    requestedAt: row.requested_at,
+    resolvedAt: row.resolved_at
+  };
+}
+
+function mapApprovalDecision(row: ApprovalDecisionRow): ApprovalDecisionRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    approvalRequestId: row.request_id,
+    reviewerAccountId: row.reviewer_account_id,
+    decision: row.decision,
+    reason: row.reason,
+    decidedAt: row.decided_at
+  };
+}
+
+function mapStateTransition(row: StateTransitionRow): StateTransitionRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    entityId: row.entity_id,
+    fromState: row.from_state,
+    toState: row.to_state,
+    actorAccountId: row.actor_account_id,
+    approvalRequestId: row.approval_request_id,
+    reason: row.reason,
+    occurredAt: row.occurred_at
+  };
+}
+
+function mapProjectComment(row: ProjectCommentRow): ProjectCommentRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    projectId: row.project_id,
+    approvalRequestId: row.approval_request_id,
+    authorAccountId: row.author_account_id,
+    kind: row.kind,
+    fieldKey: row.field_key,
+    body: row.body,
+    createdAt: row.created_at
+  };
+}
+
+function mapReviewQueueItem(row: ReviewQueueRow): ReviewQueuePage["items"][number] {
+  return {
+    tenantId: row.tenant_id,
+    approvalRequestId: row.approval_request_id,
+    projectId: row.project_id,
+    code: row.code,
+    title: row.title,
+    ownerOrganization: {
+      id: row.owner_org_id,
+      name: row.owner_name,
+      type: row.owner_type,
+      path: row.owner_path
+    },
+    projectStatus: row.project_status,
+    projectVersion: row.project_version,
+    createdByAccountId: row.created_by_account_id,
+    requestedAt: row.requested_at,
+    requestedByAccountId: row.requested_by_account_id,
+    submittedProjectVersion: row.submitted_project_version,
+    isResubmission: row.is_resubmission
+  };
+}
+
 function hasConstraint(error: unknown, constraint: string): boolean {
   if (typeof error !== "object" || error === null) {
     return false;
@@ -455,4 +940,11 @@ function hasConstraint(error: unknown, constraint: string): boolean {
     return true;
   }
   return "cause" in error && hasConstraint(error.cause, constraint);
+}
+
+function requireReturnedRow<TRow>(row: TRow | undefined, message: string): TRow {
+  if (row === undefined) {
+    throw new Error(message);
+  }
+  return row;
 }

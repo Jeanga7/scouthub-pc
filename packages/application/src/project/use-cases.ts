@@ -1,15 +1,22 @@
 import {
   assertSlice3OwnerOrganization,
+  assertProjectCommentShape,
+  assertSlice4Transition,
   buildInternalProjectSlug,
   buildProjectCode,
   isRoleAssignmentActive,
+  isProjectContentEditable,
   isSlice3MutableProjectVisibility,
   normalizeOptionalProjectText,
   normalizeProjectTitle,
   ProjectDomainError,
+  normalizeReviewText,
   validateProjectDateRange,
+  type ApprovalDecision,
   type Project,
+  type ProjectCommentKind,
   type ProjectMode,
+  type ProjectStatus,
   type ProjectVisibility
 } from "@scouthub/domain";
 import {
@@ -29,7 +36,14 @@ import type {
   ProjectListPage,
   ProjectPatch,
   ProjectRepository,
-  ProjectOwnerOption
+  ProjectTransaction,
+  ProjectOwnerOption,
+  ApprovalRequestRecord,
+  ProjectCommentRecord,
+  ProjectReviewHistory,
+  ReviewQueueCursor,
+  ReviewQueueItem,
+  ReviewQueuePage
 } from "../ports/project-repository";
 
 export interface Clock {
@@ -69,6 +83,31 @@ export interface UpdateProjectDraftInput extends RequestContext {
   readonly plannedEndAt?: Date | null;
   readonly actualStartAt?: Date | null;
   readonly actualEndAt?: Date | null;
+}
+
+export interface ProjectWorkflowInput extends RequestContext {
+  readonly actor: ActorContext;
+  readonly tenantId: string;
+  readonly projectId: string;
+  readonly expectedVersion: number;
+}
+
+export interface ProjectReviewInput extends ProjectWorkflowInput {
+  readonly approvalRequestId: string;
+}
+
+export interface ProjectDecisionInput extends ProjectReviewInput {
+  readonly reason?: string | null;
+}
+
+export interface AddProjectCommentInput extends RequestContext {
+  readonly actor: ActorContext;
+  readonly tenantId: string;
+  readonly projectId: string;
+  readonly approvalRequestId: string;
+  readonly kind: ProjectCommentKind;
+  readonly fieldKey?: string | null;
+  readonly body: string;
 }
 
 export class ProjectUseCases {
@@ -167,14 +206,36 @@ export class ProjectUseCases {
   getProjectCapabilities(input: {
     readonly actor: ActorContext;
     readonly project: ProjectDetails;
-  }): { readonly canUpdate: boolean } {
+  }): {
+    readonly canUpdate: boolean;
+    readonly canSubmit: boolean;
+    readonly canStartReview: boolean;
+    readonly canComment: boolean;
+    readonly canRequestChanges: boolean;
+    readonly canApprove: boolean;
+    readonly canReject: boolean;
+  } {
+    const resource = resourceFromDetails(input.project);
+    const now = this.clock.now();
     return {
-      canUpdate: canAccessProject(
-        input.actor,
-        "project.update",
-        resourceFromDetails(input.project),
-        { now: this.clock.now() }
-      ).effect === "allow"
+      canUpdate: isProjectContentEditable(input.project.project.status) &&
+        canAccessProject(input.actor, "project.update", resource, { now }).effect === "allow",
+      canSubmit: (input.project.project.status === "DRAFT" || input.project.project.status === "CHANGES_REQUESTED") &&
+        canAccessProject(input.actor, "project.submit", resource, { now }).effect === "allow",
+      canStartReview: input.project.project.status === "READY_FOR_REVIEW" &&
+        canAccessProject(input.actor, "project.review", resource, { now }).effect === "allow" &&
+        !isSelfReviewer(input.actor.account.id, input.project.project, null),
+      canComment: ["READY_FOR_REVIEW", "IN_REVIEW", "CHANGES_REQUESTED"].includes(input.project.project.status) &&
+        canAccessProject(input.actor, "project.comment", resource, { now }).effect === "allow",
+      canRequestChanges: input.project.project.status === "IN_REVIEW" &&
+        canAccessProject(input.actor, "project.request_changes", resource, { now }).effect === "allow" &&
+        !isSelfReviewer(input.actor.account.id, input.project.project, null),
+      canApprove: input.project.project.status === "IN_REVIEW" &&
+        canAccessProject(input.actor, "project.approve", resource, { now }).effect === "allow" &&
+        !isSelfReviewer(input.actor.account.id, input.project.project, null),
+      canReject: input.project.project.status === "IN_REVIEW" &&
+        canAccessProject(input.actor, "project.reject", resource, { now }).effect === "allow" &&
+        !isSelfReviewer(input.actor.account.id, input.project.project, null)
     };
   }
 
@@ -214,13 +275,17 @@ export class ProjectUseCases {
   }
 
   async updateProjectDraft(input: UpdateProjectDraftInput): Promise<ProjectDetails> {
+    return this.updateProjectContent(input);
+  }
+
+  async updateProjectContent(input: UpdateProjectDraftInput): Promise<ProjectDetails> {
     return this.repository.transaction(async (transaction) => {
       const current = await transaction.findProjectById(input.tenantId, input.projectId);
       if (current === null) {
         throw new NotFoundError("Project not found.");
       }
-      if (current.project.status !== "DRAFT") {
-        throw new ValidationError("Only DRAFT projects can be updated.", "PROJECT_STATUS_NOT_DRAFT", 403);
+      if (!isProjectContentEditable(current.project.status)) {
+        throw new ValidationError("Project content is frozen in the current status.", "PROJECT_CONTENT_FROZEN", 403);
       }
       assertProjectPolicy(input.actor, "project.update", resourceFromDetails(current), this.clock.now());
 
@@ -265,11 +330,346 @@ export class ProjectUseCases {
       return updated;
     });
   }
+
+  async submitProjectForReview(input: ProjectWorkflowInput): Promise<{
+    readonly project: ProjectDetails;
+    readonly approvalRequest: ApprovalRequestRecord;
+  }> {
+    return this.repository.transaction(async (transaction) => {
+      const current = await transaction.findProjectByIdForUpdate(input.tenantId, input.projectId);
+      if (current === null) {
+        throw new NotFoundError("Project not found.");
+      }
+      if (current.project.version !== input.expectedVersion) {
+        throw new ConflictError("Project was modified by another request.");
+      }
+      if (current.project.status !== "DRAFT" && current.project.status !== "CHANGES_REQUESTED") {
+        throw new ValidationError("Project cannot be submitted from the current status.", "PROJECT_TRANSITION_INVALID", 422);
+      }
+      domainValidation(() => assertSlice3OwnerOrganization(current.owner));
+      assertProjectReadyForReview(current);
+      assertProjectPolicy(input.actor, "project.submit", resourceFromDetails(current), this.clock.now());
+
+      const submittedVersion = current.project.version;
+      const request = await transaction.createApprovalRequest({
+        id: this.ids.generate(),
+        tenantId: input.tenantId,
+        projectId: input.projectId,
+        submittedProjectVersion: submittedVersion,
+        requestedByAccountId: input.actor.account.id,
+        requestedAt: this.clock.now()
+      });
+      const project = await this.transitionProject(transaction, {
+        current,
+        actor: input.actor,
+        expectedVersion: input.expectedVersion,
+        toStatus: "READY_FOR_REVIEW",
+        approvalRequestId: request.id,
+        reason: null,
+        requestId: input.requestId,
+        auditAction: "project.submitted_for_review"
+      });
+      return { project, approvalRequest: request };
+    });
+  }
+
+  async startProjectReview(input: ProjectReviewInput): Promise<ProjectDetails> {
+    return this.withPendingReview(input, "project.review", async (transaction, current, request) => {
+      if (current.project.status !== "READY_FOR_REVIEW") {
+        throw new ValidationError("Project review cannot be started from the current status.", "PROJECT_TRANSITION_INVALID", 422);
+      }
+      assertNotSelfReview(input.actor.account.id, current.project, request);
+      return this.transitionProject(transaction, {
+        current,
+        actor: input.actor,
+        expectedVersion: input.expectedVersion,
+        toStatus: "IN_REVIEW",
+        approvalRequestId: request.id,
+        reason: null,
+        requestId: input.requestId,
+        auditAction: "project.review_started"
+      });
+    });
+  }
+
+  async requestProjectChanges(input: ProjectDecisionInput): Promise<ProjectDetails> {
+    const reason = domainValidation(() => normalizeReviewText(input.reason ?? "", "PROJECT_REVIEW_REASON_REQUIRED"));
+    return this.decideProject(input, "CHANGES_REQUESTED", "project.request_changes", reason, "project.changes_requested");
+  }
+
+  async approveProjectForExecution(input: ProjectDecisionInput): Promise<ProjectDetails> {
+    const rawReason = input.reason;
+    const reason = rawReason === null || rawReason === undefined
+      ? null
+      : domainValidation(() => normalizeReviewText(rawReason, "PROJECT_REVIEW_REASON_REQUIRED"));
+    return this.decideProject(input, "APPROVED", "project.approve", reason, "project.approved_for_execution");
+  }
+
+  async rejectProject(input: ProjectDecisionInput): Promise<ProjectDetails> {
+    const reason = domainValidation(() => normalizeReviewText(input.reason ?? "", "PROJECT_REVIEW_REASON_REQUIRED"));
+    return this.decideProject(input, "REJECTED", "project.reject", reason, "project.rejected");
+  }
+
+  async addProjectComment(input: AddProjectCommentInput): Promise<ProjectCommentRecord> {
+    const comment = domainValidation(() => assertProjectCommentShape({
+      kind: input.kind,
+      fieldKey: input.fieldKey ?? null,
+      body: input.body
+    }));
+    return this.repository.transaction(async (transaction) => {
+      // Comments follow the same Project -> ApprovalRequest lock order as
+      // transitions. Otherwise a resubmission can create a newer cycle while a
+      // comment is still being attached to the old CHANGES_REQUESTED request.
+      const current = await transaction.findProjectByIdForUpdate(input.tenantId, input.projectId);
+      if (current === null) {
+        throw new NotFoundError("Project not found.");
+      }
+      const request = await transaction.findApprovalRequestByIdForUpdate(input.tenantId, input.approvalRequestId);
+      if (request === null || request.projectId !== input.projectId) {
+        throw new NotFoundError("Review cycle not found.");
+      }
+      const latestRequest = await transaction.findLatestApprovalRequestForProject(input.tenantId, input.projectId);
+      if (latestRequest === null || latestRequest.id !== request.id) {
+        throw new ValidationError("Review comments must target the current review cycle.", "PROJECT_COMMENT_REVIEW_CYCLE_INVALID", 409);
+      }
+      if (!["READY_FOR_REVIEW", "IN_REVIEW", "CHANGES_REQUESTED"].includes(current.project.status)) {
+        throw new ValidationError("Project cannot receive review comments in the current status.", "PROJECT_COMMENT_STATUS_INVALID", 422);
+      }
+      // A current cycle is identified by the highest submitted_project_version,
+      // not by status. Multiple historical cycles can be CHANGES_REQUESTED.
+      if (
+        ((current.project.status === "READY_FOR_REVIEW" || current.project.status === "IN_REVIEW") &&
+          request.status !== "PENDING") ||
+        (current.project.status === "CHANGES_REQUESTED" && request.status !== "CHANGES_REQUESTED")
+      ) {
+        throw new ValidationError("Review comments must target the current review cycle.", "PROJECT_COMMENT_REVIEW_CYCLE_INVALID", 409);
+      }
+      assertProjectPolicy(input.actor, "project.comment", resourceFromDetails(current), this.clock.now());
+      const created = await transaction.appendProjectComment({
+        id: this.ids.generate(),
+        tenantId: input.tenantId,
+        projectId: input.projectId,
+        approvalRequestId: input.approvalRequestId,
+        authorAccountId: input.actor.account.id,
+        kind: input.kind,
+        fieldKey: comment.fieldKey,
+        body: comment.body,
+        createdAt: this.clock.now()
+      });
+      await transaction.appendAuditEvent(projectAuditEvent({
+        id: this.ids.generate(),
+        tenantId: input.tenantId,
+        resourceId: input.projectId,
+        action: "project.comment_added",
+        metadata: {
+          approval_request_id: input.approvalRequestId,
+          field_key: comment.fieldKey
+        },
+        requestId: input.requestId,
+        actorAccountId: input.actor.account.id
+      }));
+      return created;
+    });
+  }
+
+  async listRegionalReviewQueue(input: {
+    readonly actor: ActorContext;
+    readonly tenantId: string;
+    readonly limit: number;
+    readonly cursor: ReviewQueueCursor | null;
+    readonly status?: ApprovalRequestRecord["status"];
+  }): Promise<ReviewQueuePage> {
+    const scopePaths = scopePathsFor(input.actor, input.tenantId, "project.review", this.clock.now());
+    if (scopePaths.length === 0) {
+      return { items: [], nextCursor: null };
+    }
+    return this.repository.transaction(async (transaction) => {
+      const page = await transaction.listReviewQueueForScopes({
+        tenantId: input.tenantId,
+        scopePaths,
+        limit: input.limit,
+        cursor: input.cursor,
+        status: input.status ?? "PENDING"
+      });
+      return {
+        ...page,
+        items: page.items.map((item) => ({
+          ...item,
+          capabilities: reviewQueueCapabilities(input.actor, item, this.clock.now())
+        }))
+      };
+    });
+  }
+
+  async getProjectReviewHistory(input: {
+    readonly actor: ActorContext;
+    readonly tenantId: string;
+    readonly projectId: string;
+  }): Promise<ProjectReviewHistory> {
+    return this.repository.transaction(async (transaction) => {
+      const current = await transaction.findProjectById(input.tenantId, input.projectId);
+      if (current === null) {
+        throw new NotFoundError("Project not found.");
+      }
+      assertProjectPolicy(input.actor, "project.read", resourceFromDetails(current), this.clock.now());
+      return transaction.listProjectReviewHistory(input.tenantId, input.projectId);
+    });
+  }
+
+  private async withPendingReview<TResult>(
+    input: ProjectReviewInput,
+    action: ProjectAction,
+    handler: (
+      transaction: ProjectTransaction,
+      current: ProjectDetails,
+      request: ApprovalRequestRecord
+    ) => Promise<TResult>
+  ): Promise<TResult> {
+    return this.repository.transaction(async (transaction) => {
+      // Workflow mutations always lock Project first, then ApprovalRequest. Keeping
+      // this order stable avoids preventable deadlocks between reviewers.
+      const current = await transaction.findProjectByIdForUpdate(input.tenantId, input.projectId);
+      if (current === null) {
+        throw new NotFoundError("Project not found.");
+      }
+      if (current.project.version !== input.expectedVersion) {
+        throw new ConflictError("Project was modified by another request.");
+      }
+      const request = await transaction.findApprovalRequestByIdForUpdate(input.tenantId, input.approvalRequestId);
+      if (request === null || request.projectId !== input.projectId || request.status !== "PENDING") {
+        throw new ConflictError("Review request is no longer pending.");
+      }
+      assertProjectPolicy(input.actor, action, resourceFromDetails(current), this.clock.now());
+      return handler(transaction, current, request);
+    });
+  }
+
+  private async decideProject(
+    input: ProjectDecisionInput,
+    decision: ApprovalDecision,
+    action: ProjectAction,
+    reason: string | null,
+    auditAction: ProjectAuditAction
+  ): Promise<ProjectDetails> {
+    return this.withPendingReview(input, action, async (transaction, current, request) => {
+      if (current.project.status !== "IN_REVIEW") {
+        throw new ValidationError("Project decision requires an active review.", "PROJECT_TRANSITION_INVALID", 422);
+      }
+      assertNotSelfReview(input.actor.account.id, current.project, request);
+      const toStatus = decisionToProjectStatus(decision);
+      const decidedAt = this.clock.now();
+      const approvalDecision = await transaction.appendApprovalDecision({
+        id: this.ids.generate(),
+        tenantId: input.tenantId,
+        approvalRequestId: request.id,
+        reviewerAccountId: input.actor.account.id,
+        decision,
+        reason,
+        decidedAt
+      });
+      const resolved = await transaction.resolveApprovalRequest({
+        tenantId: input.tenantId,
+        approvalRequestId: request.id,
+        status: decision,
+        resolvedAt: decidedAt
+      });
+      if (resolved === null) {
+        throw new ConflictError("Review request is no longer pending.");
+      }
+      return this.transitionProject(transaction, {
+        current,
+        actor: input.actor,
+        expectedVersion: input.expectedVersion,
+        toStatus,
+        approvalRequestId: request.id,
+        reason,
+        requestId: input.requestId,
+        auditAction,
+        approvalDecisionId: approvalDecision.id
+      });
+    });
+  }
+
+  private async transitionProject(
+    transaction: ProjectTransaction,
+    input: {
+      readonly current: ProjectDetails;
+      readonly actor: ActorContext;
+      readonly expectedVersion: number;
+      readonly toStatus: ProjectStatus;
+      readonly approvalRequestId: string | null;
+      readonly reason: string | null;
+      readonly requestId?: string;
+      readonly auditAction: ProjectAuditAction;
+      readonly approvalDecisionId?: string;
+    }
+  ): Promise<ProjectDetails> {
+    domainValidation(() => assertSlice4Transition(input.current.project.status, input.toStatus));
+    const updated = await transaction.updateProjectStatus({
+      tenantId: input.current.project.tenantId,
+      projectId: input.current.project.id,
+      expectedVersion: input.expectedVersion,
+      fromStatus: input.current.project.status,
+      toStatus: input.toStatus
+    });
+    if (updated === null) {
+      throw new ConflictError("Project workflow state changed concurrently.");
+    }
+    await transaction.appendStateTransition({
+      id: this.ids.generate(),
+      tenantId: input.current.project.tenantId,
+      projectId: input.current.project.id,
+      fromState: input.current.project.status,
+      toState: input.toStatus,
+      actorAccountId: input.actor.account.id,
+      approvalRequestId: input.approvalRequestId,
+      reason: input.reason,
+      occurredAt: this.clock.now()
+    });
+    await transaction.appendAuditEvent(projectAuditEvent({
+      id: this.ids.generate(),
+      tenantId: input.current.project.tenantId,
+      resourceId: input.current.project.id,
+      action: input.auditAction,
+      metadata: {
+        approval_request_id: input.approvalRequestId,
+        approval_decision_id: input.approvalDecisionId,
+        from_status: input.current.project.status,
+        to_status: input.toStatus,
+        old_version: input.current.project.version,
+        new_version: updated.project.version
+      },
+      requestId: input.requestId,
+      actorAccountId: input.actor.account.id
+    }));
+    return updated;
+  }
 }
+
+type ProjectAction =
+  | "project.create"
+  | "project.read"
+  | "project.update"
+  | "project.submit"
+  | "project.comment"
+  | "project.review"
+  | "project.request_changes"
+  | "project.approve"
+  | "project.reject";
+
+type ProjectAuditAction =
+  | "project.created"
+  | "project.updated"
+  | "project.submitted_for_review"
+  | "project.review_started"
+  | "project.comment_added"
+  | "project.changes_requested"
+  | "project.approved_for_execution"
+  | "project.rejected";
 
 function assertProjectPolicy(
   actor: ActorContext,
-  action: "project.create" | "project.read" | "project.update",
+  action: ProjectAction,
   resource: ProjectResource,
   now: Date
 ): void {
@@ -282,7 +682,7 @@ function assertProjectPolicy(
 function scopePathsFor(
   actor: ActorContext,
   tenantId: string,
-  action: "project.create" | "project.read",
+  action: ProjectAction,
   now: Date
 ): string[] {
   const paths = new Set<string>();
@@ -382,6 +782,86 @@ function resourceFromDetails(details: ProjectDetails): ProjectResource {
   };
 }
 
+function reviewQueueCapabilities(
+  actor: ActorContext,
+  item: ReviewQueueItem,
+  now: Date
+): NonNullable<ReviewQueueItem["capabilities"]> {
+  const resource: ProjectResource = {
+    projectId: item.projectId,
+    tenantId: item.tenantId,
+    ownerOrganizationId: item.ownerOrganization.id,
+    ownerOrganizationPath: item.ownerOrganization.path,
+    status: item.projectStatus,
+    createdByAccountId: item.createdByAccountId
+  };
+  const notSelfReview =
+    actor.account.id !== item.createdByAccountId &&
+    actor.account.id !== item.requestedByAccountId;
+  return {
+    canStartReview: item.projectStatus === "READY_FOR_REVIEW" &&
+      canAccessProject(actor, "project.review", resource, { now }).effect === "allow" &&
+      notSelfReview,
+    canComment: (item.projectStatus === "READY_FOR_REVIEW" || item.projectStatus === "IN_REVIEW") &&
+      canAccessProject(actor, "project.comment", resource, { now }).effect === "allow",
+    canRequestChanges: item.projectStatus === "IN_REVIEW" &&
+      canAccessProject(actor, "project.request_changes", resource, { now }).effect === "allow" &&
+      notSelfReview,
+    canApprove: item.projectStatus === "IN_REVIEW" &&
+      canAccessProject(actor, "project.approve", resource, { now }).effect === "allow" &&
+      notSelfReview,
+    canReject: item.projectStatus === "IN_REVIEW" &&
+      canAccessProject(actor, "project.reject", resource, { now }).effect === "allow" &&
+      notSelfReview
+  };
+}
+
+function assertProjectReadyForReview(details: ProjectDetails): void {
+  const missing: string[] = [];
+  if (details.project.problemStatement === null || details.project.problemStatement.trim().length === 0) {
+    missing.push("problemStatement");
+  }
+  if (details.project.diagnostic === null || details.project.diagnostic.trim().length === 0) {
+    missing.push("diagnostic");
+  }
+  if (details.projectLead.status !== "ACTIVE") {
+    missing.push("projectLeadPerson");
+  }
+  if (missing.length > 0) {
+    throw new ValidationError(
+      `Project is not ready for review: ${missing.join(", ")}.`,
+      "PROJECT_NOT_READY_FOR_REVIEW",
+      422
+    );
+  }
+}
+
+function assertNotSelfReview(
+  actorAccountId: string,
+  project: Project,
+  request: ApprovalRequestRecord
+): void {
+  if (isSelfReviewer(actorAccountId, project, request)) {
+    throw new ValidationError("Project authors cannot review their own submission.", "PROJECT_SELF_REVIEW_FORBIDDEN", 403);
+  }
+}
+
+function isSelfReviewer(
+  actorAccountId: string,
+  project: Project,
+  request: ApprovalRequestRecord | null
+): boolean {
+  return actorAccountId === project.createdByAccountId ||
+    (request !== null && actorAccountId === request.requestedByAccountId);
+}
+
+function decisionToProjectStatus(decision: ApprovalDecision): ProjectStatus {
+  if (decision === "APPROVED") {
+    return "APPROVED_FOR_EXECUTION";
+  }
+  return decision;
+}
+
 function changedFields(before: Project, after: Project): string[] {
   const fields: string[] = [];
   for (const field of [
@@ -414,7 +894,7 @@ function projectAuditEvent(input: {
   readonly id: string;
   readonly tenantId: string;
   readonly resourceId: string;
-  readonly action: "project.created" | "project.updated";
+  readonly action: ProjectAuditAction;
   readonly metadata: Record<string, unknown>;
   readonly requestId?: string;
   readonly actorAccountId: string;

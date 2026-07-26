@@ -60,7 +60,13 @@ export const permissionCodeSchema = z.enum([
   "audit.read",
   "project.create",
   "project.read",
-  "project.update"
+  "project.update",
+  "project.submit",
+  "project.comment",
+  "project.review",
+  "project.request_changes",
+  "project.approve",
+  "project.reject"
 ]);
 
 const dateTimeOrNullSchema = z.iso.datetime().nullable().optional();
@@ -364,7 +370,13 @@ export const projectResponseSchema = z.object({
     displayName: z.string()
   }),
   capabilities: z.object({
-    canUpdate: z.boolean()
+    canUpdate: z.boolean(),
+    canSubmit: z.boolean(),
+    canStartReview: z.boolean(),
+    canComment: z.boolean(),
+    canRequestChanges: z.boolean(),
+    canApprove: z.boolean(),
+    canReject: z.boolean()
   }).optional(),
   version: z.number().int().positive(),
   createdAt: z.iso.datetime(),
@@ -381,6 +393,145 @@ export const projectOwnerOptionSchema = z.object({
   name: z.string(),
   type: z.enum(["GROUP", "UNIT"]),
   path: z.string()
+});
+
+export const approvalRequestStatusSchema = z.enum([
+  "PENDING",
+  "APPROVED",
+  "CHANGES_REQUESTED",
+  "REJECTED",
+  "CANCELLED"
+]);
+export const approvalDecisionSchema = z.enum(["APPROVED", "CHANGES_REQUESTED", "REJECTED"]);
+export const projectCommentKindSchema = z.enum(["GLOBAL", "FIELD"]);
+export const projectCommentFieldKeySchema = z.enum([
+  "title",
+  "summary",
+  "problemStatement",
+  "diagnostic",
+  "projectMode",
+  "visibility",
+  "locationLabel",
+  "plannedStartAt",
+  "plannedEndAt",
+  "actualStartAt",
+  "actualEndAt"
+]);
+
+export const workflowVersionRequestSchema = z.object({
+  tenantId: uuidSchema,
+  expectedVersion: z.number().int().positive()
+}).strict();
+
+export const workflowReviewRequestSchema = workflowVersionRequestSchema.extend({
+  approvalRequestId: uuidSchema
+}).strict();
+
+export const workflowReasonRequestSchema = workflowReviewRequestSchema.extend({
+  reason: z.string().min(1).max(4000)
+}).strict();
+
+export const approveProjectRequestSchema = workflowReviewRequestSchema.extend({
+  reason: z.string().max(4000).nullable().optional()
+}).strict();
+
+export const createProjectCommentRequestSchema = z.object({
+  tenantId: uuidSchema,
+  approvalRequestId: uuidSchema,
+  kind: projectCommentKindSchema,
+  fieldKey: projectCommentFieldKeySchema.nullable().optional(),
+  body: z.string().min(1).max(4000)
+}).strict();
+
+export const listReviewsQuerySchema = z.object({
+  tenantId: uuidSchema,
+  cursor: z.string().min(1).optional(),
+  limit: z.coerce.number().int().positive().max(50).optional(),
+  status: approvalRequestStatusSchema.optional()
+});
+
+export const reviewQueueItemSchema = z.object({
+  tenantId: uuidSchema,
+  approvalRequestId: uuidSchema,
+  projectId: uuidSchema,
+  code: z.string(),
+  title: z.string(),
+  ownerOrganization: z.object({
+    id: uuidSchema,
+    name: z.string(),
+    type: organizationTypeSchema
+  }),
+  projectStatus: projectStatusSchema,
+  projectVersion: z.number().int().positive(),
+  requestedAt: z.iso.datetime(),
+  requestedBy: z.object({
+    accountId: uuidSchema
+  }),
+  submittedProjectVersion: z.number().int().positive(),
+  isResubmission: z.boolean(),
+  capabilities: z.object({
+    canStartReview: z.boolean(),
+    canComment: z.boolean(),
+    canRequestChanges: z.boolean(),
+    canApprove: z.boolean(),
+    canReject: z.boolean()
+  }).optional()
+});
+
+export const reviewQueueResponseSchema = z.object({
+  items: z.array(reviewQueueItemSchema),
+  nextCursor: z.string().nullable()
+});
+
+export const approvalRequestResponseSchema = z.object({
+  id: uuidSchema,
+  tenantId: uuidSchema,
+  projectId: uuidSchema,
+  status: approvalRequestStatusSchema,
+  submittedProjectVersion: z.number().int().positive(),
+  requestedByAccountId: uuidSchema,
+  requestedAt: z.iso.datetime(),
+  resolvedAt: z.iso.datetime().nullable()
+});
+
+export const approvalDecisionResponseSchema = z.object({
+  id: uuidSchema,
+  approvalRequestId: uuidSchema,
+  reviewerAccountId: uuidSchema,
+  decision: approvalDecisionSchema,
+  reason: z.string().nullable(),
+  decidedAt: z.iso.datetime()
+});
+
+export const projectCommentResponseSchema = z.object({
+  id: uuidSchema,
+  approvalRequestId: uuidSchema,
+  authorAccountId: uuidSchema,
+  kind: projectCommentKindSchema,
+  fieldKey: projectCommentFieldKeySchema.nullable(),
+  body: z.string(),
+  createdAt: z.iso.datetime()
+});
+
+export const stateTransitionResponseSchema = z.object({
+  id: uuidSchema,
+  fromState: projectStatusSchema,
+  toState: projectStatusSchema,
+  actorAccountId: uuidSchema,
+  approvalRequestId: uuidSchema.nullable(),
+  reason: z.string().nullable(),
+  occurredAt: z.iso.datetime()
+});
+
+export const projectReviewCycleSchema = z.object({
+  approvalRequest: approvalRequestResponseSchema,
+  comments: z.array(projectCommentResponseSchema),
+  decision: approvalDecisionResponseSchema.nullable()
+});
+
+export const projectReviewHistoryResponseSchema = z.object({
+  cycles: z.array(projectReviewCycleSchema),
+  transitions: z.array(stateTransitionResponseSchema)
 });
 
 export const problemDetailsSchema = z.object({
@@ -409,3 +560,10 @@ export type UpdateProjectDraftRequest = z.infer<typeof updateProjectDraftRequest
 export type ProjectResponse = z.infer<typeof projectResponseSchema>;
 export type ProjectListResponse = z.infer<typeof projectListResponseSchema>;
 export type ProjectOwnerOption = z.infer<typeof projectOwnerOptionSchema>;
+export type WorkflowVersionRequest = z.infer<typeof workflowVersionRequestSchema>;
+export type WorkflowReviewRequest = z.infer<typeof workflowReviewRequestSchema>;
+export type WorkflowReasonRequest = z.infer<typeof workflowReasonRequestSchema>;
+export type ApproveProjectRequest = z.infer<typeof approveProjectRequestSchema>;
+export type CreateProjectCommentRequest = z.infer<typeof createProjectCommentRequestSchema>;
+export type ReviewQueueResponse = z.infer<typeof reviewQueueResponseSchema>;
+export type ProjectReviewHistoryResponse = z.infer<typeof projectReviewHistoryResponseSchema>;

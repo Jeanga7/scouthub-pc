@@ -218,6 +218,25 @@ export const projectVisibility = pgEnum("project_visibility", [
   "ARCHIVED"
 ]);
 
+export const approvalRequestStatus = pgEnum("approval_request_status", [
+  "PENDING",
+  "APPROVED",
+  "CHANGES_REQUESTED",
+  "REJECTED",
+  "CANCELLED"
+]);
+
+export const approvalDecision = pgEnum("approval_decision_type", [
+  "APPROVED",
+  "CHANGES_REQUESTED",
+  "REJECTED"
+]);
+
+export const projectCommentKind = pgEnum("project_comment_kind", [
+  "GLOBAL",
+  "FIELD"
+]);
+
 export const account = pgTable(
   "account",
   {
@@ -578,6 +597,7 @@ export const project = pgTable(
       .defaultNow()
   },
   (table) => [
+    unique("project_id_tenant_unique").on(table.id, table.tenantId),
     unique("project_tenant_code_unique").on(table.tenantId, table.code),
     unique("project_tenant_internal_slug_unique").on(table.tenantId, table.internalSlug),
     foreignKey({
@@ -615,5 +635,156 @@ export const project = pgTable(
       "project_actual_dates_valid",
       sql`${table.actualEndAt} IS NULL OR ${table.actualStartAt} IS NULL OR ${table.actualEndAt} >= ${table.actualStartAt}`
     )
+  ]
+);
+
+export const approvalRequest = pgTable(
+  "approval_request",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    resourceType: text("resource_type").notNull().default("PROJECT"),
+    resourceId: uuid("resource_id").notNull(),
+    workflow: text("workflow").notNull().default("PROJECT"),
+    stage: text("stage").notNull().default("INITIAL_REVIEW"),
+    status: approvalRequestStatus("status").notNull().default("PENDING"),
+    submittedProjectVersion: integer("submitted_project_version").notNull(),
+    requestedByAccountId: uuid("requested_by_account_id").notNull(),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    unique("approval_request_project_tenant_unique").on(table.id, table.resourceId, table.tenantId),
+    unique("approval_request_id_tenant_unique").on(table.id, table.tenantId),
+    uniqueIndex("approval_request_one_pending_project_stage_unique")
+      .on(table.tenantId, table.resourceId, table.workflow, table.stage)
+      .where(sql`${table.status} = 'PENDING'`),
+    foreignKey({
+      columns: [table.tenantId],
+      foreignColumns: [organization.id],
+      name: "approval_request_tenant_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    foreignKey({
+      columns: [table.resourceId, table.tenantId],
+      foreignColumns: [project.id, project.tenantId],
+      name: "approval_request_project_same_tenant_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    foreignKey({
+      columns: [table.requestedByAccountId, table.tenantId],
+      foreignColumns: [accountPersonLink.accountId, accountPersonLink.tenantId],
+      name: "approval_request_requested_by_tenant_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    index("approval_request_queue_idx").on(table.tenantId, table.status, table.requestedAt, table.id),
+    check("approval_request_submitted_version_positive", sql`${table.submittedProjectVersion} >= 1`),
+    check("approval_request_project_only", sql`${table.resourceType} = 'PROJECT' AND ${table.workflow} = 'PROJECT' AND ${table.stage} = 'INITIAL_REVIEW'`),
+    check("approval_request_resolved_when_terminal", sql`(${table.status} = 'PENDING' AND ${table.resolvedAt} IS NULL) OR (${table.status} <> 'PENDING' AND ${table.resolvedAt} IS NOT NULL)`)
+  ]
+);
+
+export const approvalDecisionTable = pgTable(
+  "approval_decision",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    requestId: uuid("request_id").notNull(),
+    reviewerAccountId: uuid("reviewer_account_id").notNull(),
+    decision: approvalDecision("decision").notNull(),
+    reason: text("reason"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    unique("approval_decision_request_unique").on(table.requestId),
+    foreignKey({
+      columns: [table.requestId],
+      foreignColumns: [approvalRequest.id],
+      name: "approval_decision_request_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    foreignKey({
+      columns: [table.requestId, table.tenantId],
+      foreignColumns: [approvalRequest.id, approvalRequest.tenantId],
+      name: "approval_decision_request_tenant_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    foreignKey({
+      columns: [table.reviewerAccountId, table.tenantId],
+      foreignColumns: [accountPersonLink.accountId, accountPersonLink.tenantId],
+      name: "approval_decision_reviewer_tenant_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    check("approval_decision_reason_required", sql`(${table.decision} = 'APPROVED') OR (${table.reason} IS NOT NULL AND length(btrim(${table.reason})) > 0)`),
+    check("approval_decision_reason_length", sql`${table.reason} IS NULL OR length(${table.reason}) <= 4000`)
+  ]
+);
+
+export const stateTransition = pgTable(
+  "state_transition",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    entityType: text("entity_type").notNull().default("PROJECT"),
+    entityId: uuid("entity_id").notNull(),
+    fromState: projectStatus("from_state").notNull(),
+    toState: projectStatus("to_state").notNull(),
+    actorAccountId: uuid("actor_account_id").notNull(),
+    approvalRequestId: uuid("approval_request_id"),
+    reason: text("reason"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.entityId, table.tenantId],
+      foreignColumns: [project.id, project.tenantId],
+      name: "state_transition_project_same_tenant_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    foreignKey({
+      columns: [table.actorAccountId, table.tenantId],
+      foreignColumns: [accountPersonLink.accountId, accountPersonLink.tenantId],
+      name: "state_transition_actor_tenant_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    foreignKey({
+      columns: [table.approvalRequestId, table.entityId, table.tenantId],
+      foreignColumns: [approvalRequest.id, approvalRequest.resourceId, approvalRequest.tenantId],
+      name: "state_transition_request_project_tenant_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    index("state_transition_entity_idx").on(table.tenantId, table.entityId, table.occurredAt),
+    check("state_transition_project_only", sql`${table.entityType} = 'PROJECT'`),
+    check("state_transition_state_changed", sql`${table.fromState} <> ${table.toState}`)
+  ]
+);
+
+export const projectComment = pgTable(
+  "project_comment",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    projectId: uuid("project_id").notNull(),
+    approvalRequestId: uuid("approval_request_id").notNull(),
+    authorAccountId: uuid("author_account_id").notNull(),
+    kind: projectCommentKind("kind").notNull(),
+    fieldKey: text("field_key"),
+    body: text("body").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.projectId, table.tenantId],
+      foreignColumns: [project.id, project.tenantId],
+      name: "project_comment_project_same_tenant_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    foreignKey({
+      columns: [table.approvalRequestId, table.projectId, table.tenantId],
+      foreignColumns: [approvalRequest.id, approvalRequest.resourceId, approvalRequest.tenantId],
+      name: "project_comment_request_project_tenant_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    foreignKey({
+      columns: [table.authorAccountId, table.tenantId],
+      foreignColumns: [accountPersonLink.accountId, accountPersonLink.tenantId],
+      name: "project_comment_author_tenant_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    index("project_comment_request_idx").on(table.tenantId, table.approvalRequestId, table.createdAt),
+    check("project_comment_body_not_empty", sql`length(btrim(${table.body})) > 0`),
+    check("project_comment_body_length", sql`length(${table.body}) <= 4000`),
+    check("project_comment_kind_field_consistent", sql`(${table.kind} = 'GLOBAL' AND ${table.fieldKey} IS NULL) OR (${table.kind} = 'FIELD' AND ${table.fieldKey} IS NOT NULL)`),
+    check("project_comment_field_allowlist", sql`${table.fieldKey} IS NULL OR ${table.fieldKey} IN ('title', 'summary', 'problemStatement', 'diagnostic', 'projectMode', 'visibility', 'locationLabel', 'plannedStartAt', 'plannedEndAt', 'actualStartAt', 'actualEndAt')`)
   ]
 );
