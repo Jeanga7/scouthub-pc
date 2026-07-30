@@ -224,6 +224,31 @@ class PgEvidenceTransaction implements EvidenceTransaction {
     return result.rows[0] === undefined ? null : mapMediaAsset(result.rows[0]);
   }
 
+  async claimMediaAssetForVerification(input: {
+    readonly tenantId: string;
+    readonly projectId: string;
+    readonly assetId: string;
+    readonly now: Date;
+  }): Promise<MediaAssetRecord | null> {
+    const result = await this.db.query<MediaAssetRow>(
+      `UPDATE media_asset
+       SET upload_status = 'VERIFYING',
+           object_key = NULL,
+           verified_at = NULL,
+           rejected_at = NULL,
+           rejection_code = NULL,
+           updated_at = now()
+       WHERE tenant_id = $1
+         AND project_id = $2
+         AND id = $3
+         AND upload_status = 'PENDING_UPLOAD'
+         AND upload_expires_at > $4
+       RETURNING *`,
+      [input.tenantId, input.projectId, input.assetId, input.now]
+    );
+    return result.rows[0] === undefined ? null : mapMediaAsset(result.rows[0]);
+  }
+
   async findMediaAsset(tenantId: string, projectId: string, assetId: string): Promise<MediaAssetRecord | null> {
     const result = await this.db.query<MediaAssetRow>(
       `SELECT * FROM media_asset
@@ -254,7 +279,7 @@ class PgEvidenceTransaction implements EvidenceTransaction {
     return result.rows[0] === undefined ? null : mapEvidenceDetails(result.rows[0]);
   }
 
-  async verifyMediaAsset(input: {
+  async finalizeMediaAssetVerification(input: {
     readonly tenantId: string;
     readonly projectId: string;
     readonly assetId: string;
@@ -268,13 +293,40 @@ class PgEvidenceTransaction implements EvidenceTransaction {
            object_key = $4,
            etag = COALESCE($5, etag),
            verified_at = $6,
+           rejected_at = NULL,
+           rejection_code = NULL,
            updated_at = now()
        WHERE tenant_id = $1
          AND project_id = $2
          AND id = $3
-         AND upload_status = 'PENDING_UPLOAD'
+         AND upload_status = 'VERIFYING'
        RETURNING *`,
       [input.tenantId, input.projectId, input.assetId, input.objectKey, input.etag, input.now]
+    );
+    return result.rows[0] === undefined ? null : mapMediaAsset(result.rows[0]);
+  }
+
+  async resetMediaAssetVerification(input: {
+    readonly tenantId: string;
+    readonly projectId: string;
+    readonly assetId: string;
+    readonly now: Date;
+  }): Promise<MediaAssetRecord | null> {
+    const result = await this.db.query<MediaAssetRow>(
+      `UPDATE media_asset
+       SET upload_status = 'PENDING_UPLOAD',
+           object_key = NULL,
+           etag = NULL,
+           verified_at = NULL,
+           rejected_at = NULL,
+           rejection_code = NULL,
+           updated_at = now()
+       WHERE tenant_id = $1
+         AND project_id = $2
+         AND id = $3
+         AND upload_status = 'VERIFYING'
+       RETURNING *`,
+      [input.tenantId, input.projectId, input.assetId, input.now]
     );
     return result.rows[0] === undefined ? null : mapMediaAsset(result.rows[0]);
   }

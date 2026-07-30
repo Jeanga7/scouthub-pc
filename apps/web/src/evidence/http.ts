@@ -153,11 +153,15 @@ export function mapEvidence(details: EvidenceDetails, actor?: ActorContext): Evi
 export function mapEvidenceList(input: {
   readonly items: readonly EvidenceDetails[];
   readonly nextCursor: string | null;
+  readonly canCreate: boolean;
   readonly actor: ActorContext;
 }): EvidenceListResponse {
   return evidenceListResponseSchema.parse({
     items: input.items.map((item) => mapEvidence(item, input.actor)),
-    nextCursor: input.nextCursor
+    nextCursor: input.nextCursor,
+    capabilities: {
+      canCreate: input.canCreate
+    }
   });
 }
 

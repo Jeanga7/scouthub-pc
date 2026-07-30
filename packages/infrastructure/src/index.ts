@@ -10,6 +10,13 @@ export {
   createR2ObjectStorageAdapter,
   type R2ObjectStorageConfig
 } from "./adapters/r2-object-storage";
+export {
+  createLocalObjectStorageAdapter,
+  deleteLocalObject,
+  getLocalObject,
+  putLocalObject,
+  type LocalObjectStorageConfig
+} from "./adapters/local-object-storage";
 export type { DatabaseConnection } from "./database/connection";
 export { createPgOrganizationRepository } from "./database/organization-repository";
 export { createPgIdentityRepository } from "./database/identity-repository";

@@ -19,7 +19,9 @@ tmp/evidence/<tenant-id>/<asset-id>/<random>
 evidence/<tenant-id>/<asset-id>/<random>
 ```
 
-Only the temporary key is signed for browser `PUT`. After upload, the server verifies R2 metadata, checksum, size and magic bytes, then promotes the object with server-side CopyObject to the permanent key. The copy is conditional on the ETag observed during verification. Reuse of an old presigned PUT can only overwrite `tmp/*`; it can never alter accepted Evidence.
+Only the temporary key is signed for browser `PUT`. The presigned request locks the object key, HTTP method, content type and expiration, but does not rely on `x-amz-checksum-sha256`. The browser still computes the expected SHA-256 and stores it in PostgreSQL.
+
+After upload, the server verifies the temporary object itself: it heads the object, reads the verified bytes with an `If-Match` guard on the observed ETag, recomputes SHA-256, checks magic bytes on those same bytes, then promotes the object with server-side CopyObject to the permanent key. The copy is conditional on the same ETag. Reuse of an old presigned PUT can only overwrite `tmp/*`; it can never alter accepted Evidence.
 
 The R2 bucket is private. No public bucket, `r2.dev` public access, custom public domain or public Evidence route is introduced.
 
@@ -47,15 +49,19 @@ Permissions:
 
 ## Consistency Boundaries
 
-PostgreSQL and R2 are not atomic together. Confirmation verifies and promotes storage first, then locks the Project and MediaAsset in PostgreSQL before creating Evidence. If DB finalization fails after promotion, permanent-object cleanup is best-effort and the original DB error remains authoritative.
+PostgreSQL and R2 are not atomic together. Confirmation first locks the Project and MediaAsset in PostgreSQL, claims the asset as `VERIFYING`, then releases the transaction before expensive storage reads and promotion. If storage verification fails before promotion because the source is unavailable, the claim is safely reset to `PENDING_UPLOAD`. If DB finalization fails after promotion, no destructive cleanup runs; the permanent object is preferred as an orphan over deleting a potentially referenced Evidence blob.
 
 Project is locked before Evidence creation so submit/review freeze races serialize:
 
-- Evidence wins first: Evidence is included before submit.
+- Evidence wins first: the asset is claimed `VERIFYING` before submit can commit, and submit is blocked while an Evidence upload is pending or verifying.
 - Submit wins first: Project status becomes non-uploadable and Evidence confirmation is denied.
+
+## Local development
+
+Local development uses a dev-only same-origin storage route backed by an in-memory adapter. Tests keep using `FakeObjectStorage`. Production, preview and staging stay on the private R2 flow.
 
 ## Deferred
 
-Slice 6 owns durable async cleanup, expired temporary upload cleanup, orphan cleanup, thumbnails, compression, EXIF removal, transactional outbox, Queue consumer and retries.
+Slice 6 owns durable async cleanup, expired temporary upload cleanup, orphan cleanup, thumbnails, compression, EXIF removal, transactional outbox, Queue consumer and retries. Slice 5 does not introduce asynchronous cleanup.
 
 Evidence deletion, publication, consent, participants, SDGs/challenges, indicators, public media and final review are out of scope.

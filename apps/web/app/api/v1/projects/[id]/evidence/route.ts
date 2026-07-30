@@ -36,6 +36,7 @@ export async function GET(
     return jsonResponse(mapEvidenceList({
       items: page.items,
       nextCursor: encodeEvidenceCursor(page.nextCursor),
+      canCreate: page.capabilities?.canCreate ?? false,
       actor
     }), currentRequestId);
   } catch (error) {

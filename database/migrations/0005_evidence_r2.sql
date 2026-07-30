@@ -54,9 +54,10 @@ CREATE TABLE "media_asset" (
 	CONSTRAINT "media_asset_byte_size_positive" CHECK ("media_asset"."byte_size" > 0),
 	CONSTRAINT "media_asset_sha256_hex" CHECK ("media_asset"."sha256" ~ '^[a-f0-9]{64}$'),
 	CONSTRAINT "media_asset_dimensions_positive" CHECK (("media_asset"."width" IS NULL OR "media_asset"."width" > 0) AND ("media_asset"."height" IS NULL OR "media_asset"."height" > 0)),
-	CONSTRAINT "media_asset_verified_shape" CHECK (("media_asset"."upload_status" = 'VERIFIED' AND "media_asset"."object_key" IS NOT NULL AND "media_asset"."verified_at" IS NOT NULL AND "media_asset"."rejected_at" IS NULL AND "media_asset"."rejection_code" IS NULL) OR ("media_asset"."upload_status" <> 'VERIFIED')),
-	CONSTRAINT "media_asset_rejected_shape" CHECK (("media_asset"."upload_status" = 'REJECTED' AND "media_asset"."rejected_at" IS NOT NULL AND "media_asset"."rejection_code" IS NOT NULL) OR ("media_asset"."upload_status" <> 'REJECTED')),
-	CONSTRAINT "media_asset_pending_temp_key" CHECK (("media_asset"."upload_status" <> 'PENDING_UPLOAD' AND "media_asset"."upload_status" <> 'VERIFYING') OR "media_asset"."temporary_object_key" IS NOT NULL)
+	CONSTRAINT "media_asset_pending_shape" CHECK (("media_asset"."upload_status" <> 'PENDING_UPLOAD' OR ("media_asset"."temporary_object_key" IS NOT NULL AND "media_asset"."object_key" IS NULL AND "media_asset"."verified_at" IS NULL AND "media_asset"."rejected_at" IS NULL AND "media_asset"."rejection_code" IS NULL))),
+	CONSTRAINT "media_asset_verifying_shape" CHECK (("media_asset"."upload_status" <> 'VERIFYING' OR ("media_asset"."temporary_object_key" IS NOT NULL AND "media_asset"."object_key" IS NULL AND "media_asset"."verified_at" IS NULL AND "media_asset"."rejected_at" IS NULL AND "media_asset"."rejection_code" IS NULL))),
+	CONSTRAINT "media_asset_verified_shape" CHECK (("media_asset"."upload_status" <> 'VERIFIED' OR ("media_asset"."temporary_object_key" IS NOT NULL AND "media_asset"."object_key" IS NOT NULL AND "media_asset"."verified_at" IS NOT NULL AND "media_asset"."rejected_at" IS NULL AND "media_asset"."rejection_code" IS NULL))),
+	CONSTRAINT "media_asset_rejected_shape" CHECK (("media_asset"."upload_status" <> 'REJECTED' OR ("media_asset"."object_key" IS NULL AND "media_asset"."verified_at" IS NULL AND "media_asset"."rejected_at" IS NOT NULL AND "media_asset"."rejection_code" IS NOT NULL)))
 );
 --> statement-breakpoint
 ALTER TABLE "evidence" ADD CONSTRAINT "evidence_project_same_tenant_fk" FOREIGN KEY ("project_id","tenant_id") REFERENCES "public"."project"("id","tenant_id") ON DELETE restrict ON UPDATE restrict;--> statement-breakpoint
@@ -99,3 +100,48 @@ $$ LANGUAGE plpgsql;--> statement-breakpoint
 CREATE TRIGGER media_asset_verified_object_key_immutable
 BEFORE UPDATE ON "media_asset"
 FOR EACH ROW EXECUTE FUNCTION reject_verified_media_asset_object_key_change();
+CREATE OR REPLACE FUNCTION reject_verified_media_asset_change()
+RETURNS trigger AS $$
+BEGIN
+  IF OLD.upload_status = 'VERIFIED' THEN
+    IF OLD.tenant_id IS DISTINCT FROM NEW.tenant_id
+      OR OLD.project_id IS DISTINCT FROM NEW.project_id
+      OR OLD.object_key IS DISTINCT FROM NEW.object_key
+      OR OLD.mime IS DISTINCT FROM NEW.mime
+      OR OLD.byte_size IS DISTINCT FROM NEW.byte_size
+      OR OLD.sha256 IS DISTINCT FROM NEW.sha256
+      OR OLD.classification IS DISTINCT FROM NEW.classification
+      OR OLD.uploaded_by_account_id IS DISTINCT FROM NEW.uploaded_by_account_id
+      OR OLD.upload_status IS DISTINCT FROM NEW.upload_status
+      OR OLD.verified_at IS DISTINCT FROM NEW.verified_at
+      OR OLD.etag IS DISTINCT FROM NEW.etag THEN
+      RAISE EXCEPTION 'verified media asset metadata is immutable';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;--> statement-breakpoint
+CREATE TRIGGER media_asset_verified_metadata_immutable
+BEFORE UPDATE ON "media_asset"
+FOR EACH ROW EXECUTE FUNCTION reject_verified_media_asset_change();
+CREATE OR REPLACE FUNCTION reject_evidence_delete()
+RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'evidence records are immutable';
+END;
+$$ LANGUAGE plpgsql;--> statement-breakpoint
+CREATE TRIGGER evidence_delete_blocked
+BEFORE DELETE ON "evidence"
+FOR EACH ROW EXECUTE FUNCTION reject_evidence_delete();--> statement-breakpoint
+CREATE OR REPLACE FUNCTION reject_verified_media_asset_delete()
+RETURNS trigger AS $$
+BEGIN
+  IF OLD.upload_status = 'VERIFIED' THEN
+    RAISE EXCEPTION 'verified media assets are immutable';
+  END IF;
+  RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;--> statement-breakpoint
+CREATE TRIGGER media_asset_verified_delete_blocked
+BEFORE DELETE ON "media_asset"
+FOR EACH ROW EXECUTE FUNCTION reject_verified_media_asset_delete();

@@ -6,30 +6,21 @@ ScoutHub-PC Evidence files are private. Do not enable public bucket access, `r2.
 
 1. Create one private Cloudflare R2 bucket for the target environment, for example `scouthub-pc-evidence`.
 2. Create S3-compatible credentials scoped to this bucket with the minimum operations needed for signed `PUT`, signed `GET`, `HEAD`, `DELETE` and server-side CopyObject.
-3. Configure the Worker binding:
-
-```json
-{
-  "binding": "EVIDENCE_BUCKET",
-  "bucket_name": "scouthub-pc-evidence"
-}
-```
-
-4. Configure runtime variables:
+3. Configure runtime variables:
 
 ```text
 R2_ACCOUNT_ID=<account id>
 R2_BUCKET_NAME=<bucket name>
 ```
 
-5. Configure runtime secrets:
+4. Configure runtime secrets:
 
 ```text
 R2_ACCESS_KEY_ID=<bucket-scoped access key>
 R2_SECRET_ACCESS_KEY=<bucket-scoped secret key>
 ```
 
-6. Do not place `R2_SECRET_ACCESS_KEY` in frontend build variables or logs.
+5. Do not place `R2_SECRET_ACCESS_KEY` in frontend build variables or logs.
 
 ## CORS
 
@@ -42,8 +33,8 @@ Minimum policy:
   {
     "AllowedOrigins": ["https://example.scouthub-pc.org"],
     "AllowedMethods": ["PUT", "GET", "HEAD"],
-    "AllowedHeaders": ["Content-Type", "x-amz-checksum-sha256"],
-    "ExposeHeaders": ["ETag", "x-amz-checksum-sha256"],
+    "AllowedHeaders": ["Content-Type"],
+    "ExposeHeaders": ["ETag"],
     "MaxAgeSeconds": 300
   }
 ]
@@ -55,8 +46,9 @@ Minimum policy:
 2. Initiate an upload from an authorized ScoutHub-PC account.
 3. Verify the browser uploads directly to R2 using the signed `PUT`.
 4. Confirm upload and check that the accepted object key starts with `evidence/`, not `tmp/`.
-5. Request a download URL and verify it expires quickly.
-6. Check audit entries for URL issuance and confirm no signed URL or secret appears in metadata.
+5. Verify the browser computes SHA-256 locally and the server recomputes the actual SHA-256 from the temporary object before promotion.
+6. Request a download URL and verify it expires quickly.
+7. Check audit entries for URL issuance and confirm no signed URL or secret appears in metadata.
 
 ## Rotation and Compromise
 
@@ -71,7 +63,7 @@ If a key is suspected compromised:
 
 ## Cost and Quota
 
-Monitor R2 storage and Class A/B operations. Slice 5 limits files to JPEG/PNG 12 MiB and PDF 20 MiB and adds a DB guard for pending upload intents, but this is not a complete abuse-prevention system.
+Monitor R2 storage and Class A/B operations. Slice 5 limits files to JPEG/PNG 12 MiB and PDF 20 MiB and adds a DB guard for pending and verifying upload intents, but this is not a complete abuse-prevention system.
 
 ## Rollback
 

@@ -401,6 +401,7 @@ export function ProjectEvidenceClient({ projectId, initialTenantId }: {
 }) {
   const [items, setItems] = useState<EvidenceResponse[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [canCreate, setCanCreate] = useState(false);
   const [message, setMessage] = useState("Chargement...");
 
   const load = useCallback(async (cursor?: string) => {
@@ -414,6 +415,7 @@ export function ProjectEvidenceClient({ projectId, initialTenantId }: {
       );
       setItems((current) => cursor === undefined ? response.items : [...current, ...response.items]);
       setNextCursor(response.nextCursor);
+      setCanCreate(response.capabilities.canCreate);
       setMessage(response.items.length === 0 ? "Aucune preuve." : "");
     } catch {
       setMessage("Preuves inaccessibles.");
@@ -442,7 +444,9 @@ export function ProjectEvidenceClient({ projectId, initialTenantId }: {
       <p className="eyebrow">Preuves</p>
       <h1>Preuves du projet</h1>
       {message.length > 0 ? <p role="status">{message}</p> : null}
-      <EvidenceUploader projectId={projectId} tenantId={initialTenantId} onUploaded={() => { void load(); }} />
+      {canCreate ? (
+        <EvidenceUploader projectId={projectId} tenantId={initialTenantId} onUploaded={() => { void load(); }} />
+      ) : null}
       <div className="project-list">
         {items.map((item) => (
           <article className="project-card" key={item.id}>

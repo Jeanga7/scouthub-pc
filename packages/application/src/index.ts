@@ -15,10 +15,12 @@ export type {
   CreateUploadUrlInput,
   CreateDownloadUrlInput,
   ObjectHead,
+  ObjectStorageErrorCode,
   ObjectStorage,
   PromoteObjectInput,
   SignedObjectUrl
 } from "./ports/object-storage";
+export { ObjectStorageError } from "./ports/object-storage";
 export { FakeObjectStorage, type FakeStoredObject } from "./ports/fake-object-storage";
 export type {
   BaseRepository,

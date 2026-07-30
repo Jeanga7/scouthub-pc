@@ -193,6 +193,11 @@ export interface ProjectTransaction {
     tenantId: string,
     approvalRequestId: string
   ): Promise<ApprovalRequestRecord | null>;
+  countPendingEvidenceUploadsForProject(input: {
+    readonly tenantId: string;
+    readonly projectId: string;
+    readonly now: Date;
+  }): Promise<number>;
   findLatestApprovalRequestForProject(
     tenantId: string,
     projectId: string

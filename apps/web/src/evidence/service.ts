@@ -6,6 +6,7 @@ import {
   type ObjectStorage
 } from "@scouthub/application";
 import {
+  createLocalObjectStorageAdapter,
   createPgEvidenceRepository,
   createR2ObjectStorageAdapter
 } from "@scouthub/infrastructure";
@@ -34,8 +35,13 @@ export function createEvidenceUseCases(): EvidenceUseCases {
 }
 
 function createObjectStorage(env: ReturnType<typeof getServerEnv>): ObjectStorage {
-  if (env.APP_ENV === "local" || env.APP_ENV === "test") {
+  if (env.APP_ENV === "test") {
     return new FakeObjectStorage();
+  }
+  if (env.APP_ENV === "local") {
+    return createLocalObjectStorageAdapter({
+      origin: env.APP_ORIGIN
+    });
   }
   return createR2ObjectStorageAdapter({
     accountId: requireEnv(env.R2_ACCOUNT_ID, "R2_ACCOUNT_ID"),

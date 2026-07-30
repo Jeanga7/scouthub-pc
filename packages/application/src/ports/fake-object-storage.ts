@@ -1,3 +1,6 @@
+import {
+  ObjectStorageError
+} from "./object-storage";
 import type {
   CreateDownloadUrlInput,
   CreateUploadUrlInput,
@@ -12,15 +15,23 @@ export interface FakeStoredObject {
   readonly byteSize: number;
   readonly checksumSha256Base64: string;
   readonly etag: string;
-  readonly prefix: Uint8Array;
+  readonly bytes: Uint8Array;
 }
 
 export class FakeObjectStorage implements ObjectStorage {
   readonly objects = new Map<string, FakeStoredObject>();
   readonly deletedKeys: string[] = [];
   readonly promoted: PromoteObjectInput[] = [];
+  headCalls = 0;
+  readCalls = 0;
+  promoteCalls = 0;
+  deleteCalls = 0;
+  uploadSignCalls = 0;
+  downloadSignCalls = 0;
   failUploadSigning = false;
   failDownloadSigning = false;
+  failHead = false;
+  failRead = false;
   failPromotion = false;
   failDelete = false;
 
@@ -29,23 +40,24 @@ export class FakeObjectStorage implements ObjectStorage {
   }
 
   createUploadUrl(input: CreateUploadUrlInput): Promise<SignedObjectUrl> {
+    this.uploadSignCalls += 1;
     if (this.failUploadSigning) {
-      return Promise.reject(new Error("fake upload signing failure"));
+      return Promise.reject(new ObjectStorageError("fake upload signing failure", "SIGNING_FAILED"));
     }
     return Promise.resolve({
       url: `https://storage.test/${encodeURIComponent(input.key)}?signed=put`,
       method: "PUT",
       expiresAt: new Date(Date.now() + input.expiresInSeconds * 1000),
       requiredHeaders: {
-        "Content-Type": input.contentType,
-        "x-amz-checksum-sha256": input.checksumSha256Base64
+        "Content-Type": input.contentType
       }
     });
   }
 
   createDownloadUrl(input: CreateDownloadUrlInput): Promise<SignedObjectUrl> {
+    this.downloadSignCalls += 1;
     if (this.failDownloadSigning) {
-      return Promise.reject(new Error("fake download signing failure"));
+      return Promise.reject(new ObjectStorageError("fake download signing failure", "SIGNING_FAILED"));
     }
     return Promise.resolve({
       url: `https://storage.test/${encodeURIComponent(input.key)}?signed=get`,
@@ -56,6 +68,10 @@ export class FakeObjectStorage implements ObjectStorage {
   }
 
   headObject(key: string): Promise<ObjectHead | null> {
+    this.headCalls += 1;
+    if (this.failHead) {
+      return Promise.reject(new ObjectStorageError("fake head failure", "STORAGE_UNAVAILABLE"));
+    }
     const object = this.objects.get(key);
     return Promise.resolve(object === undefined
       ? null
@@ -68,21 +84,33 @@ export class FakeObjectStorage implements ObjectStorage {
         });
   }
 
-  readObjectPrefix(key: string, byteLength: number): Promise<Uint8Array> {
-    const object = this.objects.get(key);
-    if (object === undefined) {
-      return Promise.reject(new Error("fake object missing"));
+  readObjectForVerification(input: {
+    readonly key: string;
+    readonly expectedEtag: string;
+    readonly maxBytes: number;
+  }): Promise<Uint8Array | null> {
+    this.readCalls += 1;
+    if (this.failRead) {
+      return Promise.reject(new ObjectStorageError("fake read failure", "STORAGE_UNAVAILABLE"));
     }
-    return Promise.resolve(object.prefix.slice(0, byteLength));
+    const object = this.objects.get(input.key);
+    if (object === undefined) {
+      return Promise.resolve(null);
+    }
+    if (object.etag !== input.expectedEtag) {
+      return Promise.reject(new ObjectStorageError("fake source changed", "SOURCE_CHANGED"));
+    }
+    return Promise.resolve(object.bytes.slice(0, input.maxBytes));
   }
 
   promoteObject(input: PromoteObjectInput): Promise<void> {
+    this.promoteCalls += 1;
     if (this.failPromotion) {
-      return Promise.reject(new Error("fake promotion failure"));
+      return Promise.reject(new ObjectStorageError("fake promotion failure", "STORAGE_UNAVAILABLE"));
     }
     const source = this.objects.get(input.sourceKey);
     if (source === undefined || source.etag !== input.sourceEtag) {
-      return Promise.reject(new Error("fake conditional copy failure"));
+      return Promise.reject(new ObjectStorageError("fake conditional copy failure", "SOURCE_CHANGED"));
     }
     this.promoted.push(input);
     this.objects.set(input.destinationKey, source);
@@ -90,8 +118,9 @@ export class FakeObjectStorage implements ObjectStorage {
   }
 
   deleteObject(key: string): Promise<void> {
+    this.deleteCalls += 1;
     if (this.failDelete) {
-      return Promise.reject(new Error("fake delete failure"));
+      return Promise.reject(new ObjectStorageError("fake delete failure", "STORAGE_UNAVAILABLE"));
     }
     this.deletedKeys.push(key);
     this.objects.delete(key);

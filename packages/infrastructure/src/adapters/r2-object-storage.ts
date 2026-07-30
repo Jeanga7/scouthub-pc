@@ -1,4 +1,7 @@
 import { AwsClient } from "aws4fetch";
+import {
+  ObjectStorageError
+} from "@scouthub/application";
 import type {
   CreateDownloadUrlInput,
   CreateUploadUrlInput,
@@ -34,8 +37,7 @@ export function createR2ObjectStorageAdapter(config: R2ObjectStorageConfig): Obj
   return {
     async createUploadUrl(input: CreateUploadUrlInput): Promise<SignedObjectUrl> {
       const headers = {
-        "Content-Type": input.contentType,
-        "x-amz-checksum-sha256": input.checksumSha256Base64
+        "Content-Type": input.contentType
       };
       const signed = await client.sign(objectUrl(baseUrl, input.key, input.expiresInSeconds), {
         method: "PUT",
@@ -78,22 +80,33 @@ export function createR2ObjectStorageAdapter(config: R2ObjectStorageConfig): Obj
       }
       return {
         key,
-        contentType: response.headers.get("content-type") ?? "",
+        contentType: response.headers.get("content-type"),
         byteSize: Number(response.headers.get("content-length") ?? 0),
-        checksumSha256Base64: response.headers.get("x-amz-checksum-sha256") ?? "",
+        checksumSha256Base64: response.headers.get("x-amz-checksum-sha256"),
         etag: response.headers.get("etag")
       };
     },
 
-    async readObjectPrefix(key: string, byteLength: number): Promise<Uint8Array> {
-      const response = await signedRequest(objectUrl(baseUrl, key), {
+    async readObjectForVerification(input: {
+      readonly key: string;
+      readonly expectedEtag: string;
+      readonly maxBytes: number;
+    }): Promise<Uint8Array | null> {
+      const response = await signedRequest(objectUrl(baseUrl, input.key), {
         method: "GET",
         headers: {
-          Range: `bytes=0-${Math.max(0, byteLength - 1)}`
+          Range: `bytes=0-${Math.max(0, input.maxBytes - 1)}`,
+          "If-Match": input.expectedEtag
         }
       });
+      if (response.status === 404) {
+        return null;
+      }
+      if (response.status === 412) {
+        throw new ObjectStorageError("R2 source object changed.", "SOURCE_CHANGED");
+      }
       if (!response.ok) {
-        throw new Error(`R2 range read failed with status ${response.status}.`);
+        throw new ObjectStorageError(`R2 verification read failed with status ${response.status}.`, "STORAGE_UNAVAILABLE");
       }
       return new Uint8Array(await response.arrayBuffer());
     },
@@ -110,15 +123,18 @@ export function createR2ObjectStorageAdapter(config: R2ObjectStorageConfig): Obj
           "x-amz-copy-source-if-match": input.sourceEtag
         }
       });
+      if (response.status === 412) {
+        throw new ObjectStorageError("R2 source object changed.", "SOURCE_CHANGED");
+      }
       if (!response.ok) {
-        throw new Error(`R2 copy failed with status ${response.status}.`);
+        throw new ObjectStorageError(`R2 copy failed with status ${response.status}.`, "STORAGE_UNAVAILABLE");
       }
     },
 
     async deleteObject(key: string): Promise<void> {
       const response = await signedRequest(objectUrl(baseUrl, key), { method: "DELETE" });
       if (!response.ok && response.status !== 404) {
-        throw new Error(`R2 delete failed with status ${response.status}.`);
+        throw new ObjectStorageError(`R2 delete failed with status ${response.status}.`, "STORAGE_UNAVAILABLE");
       }
     }
   };

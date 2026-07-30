@@ -552,13 +552,16 @@ function mockEvidenceUseCases(overrides: Partial<EvidenceUseCases>): void {
         method: "PUT",
         expiresAt: now,
         requiredHeaders: {
-          "Content-Type": "image/jpeg",
-          "x-amz-checksum-sha256": "checksum"
+          "Content-Type": "image/jpeg"
         }
       }
     }),
     confirmEvidenceUpload: vi.fn().mockResolvedValue(evidenceDetails()),
-    listEvidence: vi.fn().mockResolvedValue({ items: [evidenceDetails()], nextCursor: null }),
+    listEvidence: vi.fn().mockResolvedValue({
+      items: [evidenceDetails()],
+      nextCursor: null,
+      capabilities: { canCreate: true }
+    }),
     createDownloadUrl: vi.fn().mockResolvedValue({
       url: "https://storage.test/download?X-Amz-Expires=120",
       expiresAt: now

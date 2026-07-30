@@ -76,6 +76,9 @@ export interface EvidenceCursor {
 export interface EvidenceListPage {
   readonly items: readonly EvidenceDetails[];
   readonly nextCursor: EvidenceCursor | null;
+  readonly capabilities?: {
+    readonly canCreate: boolean;
+  };
 }
 
 export interface MediaAssetInsert {
@@ -119,15 +122,27 @@ export interface EvidenceTransaction {
     readonly status: EvidenceRejectionCode;
     readonly now: Date;
   }): Promise<MediaAssetRecord | null>;
+  claimMediaAssetForVerification(input: {
+    readonly tenantId: string;
+    readonly projectId: string;
+    readonly assetId: string;
+    readonly now: Date;
+  }): Promise<MediaAssetRecord | null>;
   findMediaAsset(tenantId: string, projectId: string, assetId: string): Promise<MediaAssetRecord | null>;
   findMediaAssetForUpdate(tenantId: string, projectId: string, assetId: string): Promise<MediaAssetRecord | null>;
   findEvidenceByAsset(tenantId: string, projectId: string, assetId: string): Promise<EvidenceDetails | null>;
-  verifyMediaAsset(input: {
+  finalizeMediaAssetVerification(input: {
     readonly tenantId: string;
     readonly projectId: string;
     readonly assetId: string;
     readonly objectKey: string;
     readonly etag: string | null;
+    readonly now: Date;
+  }): Promise<MediaAssetRecord | null>;
+  resetMediaAssetVerification(input: {
+    readonly tenantId: string;
+    readonly projectId: string;
+    readonly assetId: string;
     readonly now: Date;
   }): Promise<MediaAssetRecord | null>;
   insertEvidence(input: EvidenceInsert): Promise<EvidenceRecord>;

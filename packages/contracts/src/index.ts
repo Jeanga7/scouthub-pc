@@ -604,7 +604,10 @@ export const evidenceResponseSchema = z.object({
 
 export const evidenceListResponseSchema = z.object({
   items: z.array(evidenceResponseSchema),
-  nextCursor: z.string().nullable()
+  nextCursor: z.string().nullable(),
+  capabilities: z.object({
+    canCreate: z.boolean()
+  })
 });
 
 export const createEvidenceDownloadUrlRequestSchema = z.object({

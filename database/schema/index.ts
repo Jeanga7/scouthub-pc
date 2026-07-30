@@ -883,16 +883,20 @@ export const mediaAsset = pgTable(
     check("media_asset_sha256_hex", sql`${table.sha256} ~ '^[a-f0-9]{64}$'`),
     check("media_asset_dimensions_positive", sql`(${table.width} IS NULL OR ${table.width} > 0) AND (${table.height} IS NULL OR ${table.height} > 0)`),
     check(
+      "media_asset_pending_shape",
+      sql`${table.uploadStatus} <> 'PENDING_UPLOAD' OR (${table.temporaryObjectKey} IS NOT NULL AND ${table.objectKey} IS NULL AND ${table.verifiedAt} IS NULL AND ${table.rejectedAt} IS NULL AND ${table.rejectionCode} IS NULL)`
+    ),
+    check(
+      "media_asset_verifying_shape",
+      sql`${table.uploadStatus} <> 'VERIFYING' OR (${table.temporaryObjectKey} IS NOT NULL AND ${table.objectKey} IS NULL AND ${table.verifiedAt} IS NULL AND ${table.rejectedAt} IS NULL AND ${table.rejectionCode} IS NULL)`
+    ),
+    check(
       "media_asset_verified_shape",
-      sql`(${table.uploadStatus} = 'VERIFIED' AND ${table.objectKey} IS NOT NULL AND ${table.verifiedAt} IS NOT NULL AND ${table.rejectedAt} IS NULL AND ${table.rejectionCode} IS NULL) OR (${table.uploadStatus} <> 'VERIFIED')`
+      sql`${table.uploadStatus} <> 'VERIFIED' OR (${table.temporaryObjectKey} IS NOT NULL AND ${table.objectKey} IS NOT NULL AND ${table.verifiedAt} IS NOT NULL AND ${table.rejectedAt} IS NULL AND ${table.rejectionCode} IS NULL)`
     ),
     check(
       "media_asset_rejected_shape",
-      sql`(${table.uploadStatus} = 'REJECTED' AND ${table.rejectedAt} IS NOT NULL AND ${table.rejectionCode} IS NOT NULL) OR (${table.uploadStatus} <> 'REJECTED')`
-    ),
-    check(
-      "media_asset_pending_temp_key",
-      sql`(${table.uploadStatus} <> 'PENDING_UPLOAD' AND ${table.uploadStatus} <> 'VERIFYING') OR ${table.temporaryObjectKey} IS NOT NULL`
+      sql`${table.uploadStatus} <> 'REJECTED' OR (${table.objectKey} IS NULL AND ${table.verifiedAt} IS NULL AND ${table.rejectedAt} IS NOT NULL AND ${table.rejectionCode} IS NOT NULL)`
     )
   ]
 );

@@ -250,6 +250,25 @@ class PgProjectTransaction implements ProjectTransaction {
     return result.rows[0] === undefined ? null : mapApprovalRequest(result.rows[0]);
   }
 
+  async countPendingEvidenceUploadsForProject(input: {
+    readonly tenantId: string;
+    readonly projectId: string;
+    readonly now: Date;
+  }): Promise<number> {
+    const result = await this.db.query<QueryResultRow & { count: string }>(
+      `SELECT count(*)::text AS count
+       FROM media_asset
+       WHERE tenant_id = $1
+         AND project_id = $2
+         AND (
+           upload_status = 'VERIFYING'
+           OR (upload_status = 'PENDING_UPLOAD' AND upload_expires_at > $3)
+         )`,
+      [input.tenantId, input.projectId, input.now]
+    );
+    return Number(result.rows[0]?.count ?? 0);
+  }
+
   async listProjectsForScopes(input: {
     readonly tenantId: string;
     readonly scopePaths: readonly string[];

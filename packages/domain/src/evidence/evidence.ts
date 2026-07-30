@@ -25,6 +25,7 @@ export type EvidenceRejectionCode =
   | "MAGIC_BYTES_MISMATCH"
   | "MIME_MISMATCH"
   | "UPLOAD_EXPIRED"
+  | "SOURCE_CHANGED"
   | "PROMOTION_FAILED"
   | "UPLOAD_SIGNING_FAILED";
 

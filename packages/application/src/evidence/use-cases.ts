@@ -21,9 +21,9 @@ import {
 } from "@scouthub/domain";
 import { canAccessEvidence, type EvidenceResource } from "@scouthub/authz";
 import type { ActorContext } from "../ports/identity-repository";
-import type { ObjectStorage } from "../ports/object-storage";
+import { ObjectStorageError, type ObjectStorage } from "../ports/object-storage";
 import { createAuditEvent, type EvidenceAuditAction, type RequestContext } from "../organization/audit";
-import { ConflictError, NotFoundError, ValidationError } from "../organization/errors";
+import { ApplicationError, ConflictError, NotFoundError, ValidationError } from "../organization/errors";
 import type { IdGenerator } from "../organization/use-cases";
 import type {
   EvidenceDetails,
@@ -138,7 +138,6 @@ export class EvidenceUseCases {
       const signed = await this.storage.createUploadUrl({
         key: requireKey(asset.temporaryObjectKey),
         contentType: asset.mime,
-        checksumSha256Base64: sha256HexToBase64(asset.sha256),
         expiresInSeconds: evidenceUploadUrlTtlSeconds
       });
       return {
@@ -151,7 +150,11 @@ export class EvidenceUseCases {
         }
       };
     } catch (error) {
-      await this.rejectAsset(input, asset.id, "UPLOAD_SIGNING_FAILED");
+      try {
+        await this.rejectAsset(input, asset.id, "UPLOAD_SIGNING_FAILED");
+      } catch {
+        // Keep the original signing error authoritative.
+      }
       throw error;
     }
   }
@@ -162,46 +165,95 @@ export class EvidenceUseCases {
     const description = domainValidation(() => normalizeEvidenceDescription(input.description));
     const visibility = domainValidation(() => assertEvidenceVisibility(input.visibility));
 
-    const existing = await this.repository.transaction((transaction) =>
-      transaction.findEvidenceByAsset(input.tenantId, input.projectId, input.assetId)
-    );
-    if (existing !== null) {
-      if (
-        existing.evidence.type === type &&
-        existing.evidence.title === title &&
-        existing.evidence.description === description &&
-        sameDate(existing.evidence.occurredAt, input.occurredAt ?? null) &&
-        existing.evidence.visibility === visibility
-      ) {
-        return existing;
+    const claim = await this.repository.transaction(async (transaction) => {
+      const project = await transaction.findProjectForUpdate(input.tenantId, input.projectId);
+      if (project === null) {
+        throw new NotFoundError("Project not found.");
       }
-      throw new ConflictError("Evidence upload was already confirmed with different metadata.");
+      domainValidation(() => assertUploadableProjectStatus(project.status));
+      const asset = await transaction.findMediaAssetForUpdate(input.tenantId, input.projectId, input.assetId);
+      if (asset === null) {
+        throw new NotFoundError("Evidence upload not found.");
+      }
+      assertEvidencePolicy(input.actor, "evidence.create", project, asset.classification, this.clock.now());
+
+      const existing = await transaction.findEvidenceByAsset(input.tenantId, input.projectId, input.assetId);
+      if (existing !== null) {
+        if (
+          existing.evidence.type === type &&
+          existing.evidence.title === title &&
+          existing.evidence.description === description &&
+          sameDate(existing.evidence.occurredAt, input.occurredAt ?? null) &&
+          existing.evidence.visibility === visibility
+        ) {
+          return { kind: "existing" as const, existing };
+        }
+        throw new ConflictError("Evidence upload was already confirmed with different metadata.");
+      }
+
+      if (asset.uploadStatus === "VERIFYING") {
+        throw new ValidationError("Evidence verification is already in progress.", "EVIDENCE_VERIFICATION_IN_PROGRESS", 409);
+      }
+      if (asset.uploadStatus === "REJECTED") {
+        throw new ConflictError("Evidence upload has already been rejected.");
+      }
+      if (asset.uploadStatus === "VERIFIED") {
+        if (existing !== null) {
+          return { kind: "existing" as const, existing };
+        }
+        throw new ConflictError("Evidence upload has already been confirmed.");
+      }
+      if (asset.uploadExpiresAt <= this.clock.now()) {
+        const rejected = await transaction.markMediaAssetRejected({
+          tenantId: input.tenantId,
+          assetId: asset.id,
+          status: "UPLOAD_EXPIRED",
+          now: this.clock.now()
+        });
+        if (rejected === null) {
+          throw new ConflictError("Evidence upload is not pending.");
+        }
+        throw new ValidationError("Evidence upload expired.", "UPLOAD_EXPIRED", 422);
+      }
+
+      domainValidation(() => assertEvidenceMimeMatchesType(type, asset.mime));
+
+      const claimed = await transaction.claimMediaAssetForVerification({
+        tenantId: input.tenantId,
+        projectId: input.projectId,
+        assetId: asset.id,
+        now: this.clock.now()
+      });
+      if (claimed === null) {
+        throw new ValidationError("Evidence verification is already in progress.", "EVIDENCE_VERIFICATION_IN_PROGRESS", 409);
+      }
+      return { kind: "claimed" as const, asset: claimed };
+    });
+
+    if (claim.kind === "existing") {
+      return claim.existing;
     }
 
-    const pending = await this.repository.transaction((transaction) =>
-      transaction.findMediaAsset(input.tenantId, input.projectId, input.assetId)
-    );
-    if (pending === null) {
-      throw new NotFoundError("Evidence upload not found.");
-    }
-    if (pending.uploadStatus !== "PENDING_UPLOAD") {
-      throw new ConflictError("Evidence upload is not pending.");
-    }
-    if (pending.uploadExpiresAt <= this.clock.now()) {
-      await this.rejectAsset(input, pending.id, "UPLOAD_EXPIRED");
-      throw new ValidationError("Evidence upload expired.", "UPLOAD_EXPIRED", 422);
-    }
-    domainValidation(() => assertEvidenceMimeMatchesType(type, pending.mime));
-
+    const pending = claim.asset;
     const permanentKey = permanentEvidenceKey(input.tenantId, pending.id, pending.temporaryObjectKey);
-    let promotedEtag: string | null;
+    let promotedEtag: string;
     try {
-      promotedEtag = await this.verifyAndPromoteObject(pending, permanentKey);
+      const verification = await this.verifyEvidenceObject(pending);
+      promotedEtag = verification.promotedEtag;
     } catch (error) {
+      if (isStorageUnavailableError(error)) {
+        await this.resetVerificationClaim(input.tenantId, input.projectId, pending.id);
+        throw new ApplicationError("Evidence storage unavailable.", "EVIDENCE_STORAGE_UNAVAILABLE", 503);
+      }
+      if (error instanceof ApplicationError && error.code === "EVIDENCE_PROMOTION_AMBIGUOUS") {
+        throw error;
+      }
       const rejectionCode = rejectionCodeFrom(error);
       await this.rejectAsset(input, pending.id, rejectionCode);
-      await this.storage.deleteObject(requireKey(pending.temporaryObjectKey)).catch(() => undefined);
       if (error instanceof ValidationError) {
+        throw error;
+      }
+      if (error instanceof ApplicationError) {
         throw error;
       }
       throw new ValidationError("Evidence upload verification failed.", rejectionCode, 422);
@@ -216,18 +268,29 @@ export class EvidenceUseCases {
         }
         domainValidation(() => assertUploadableProjectStatus(project.status));
         assertEvidencePolicy(input.actor, "evidence.create", project, pending.classification, this.clock.now());
+
         const lockedAsset = await transaction.findMediaAssetForUpdate(input.tenantId, input.projectId, input.assetId);
         if (lockedAsset === null) {
           throw new NotFoundError("Evidence upload not found.");
         }
-        if (lockedAsset.uploadStatus !== "PENDING_UPLOAD") {
-          const already = await transaction.findEvidenceByAsset(input.tenantId, input.projectId, input.assetId);
-          if (lockedAsset.uploadStatus === "VERIFIED" && already !== null) {
+        const already = await transaction.findEvidenceByAsset(input.tenantId, input.projectId, input.assetId);
+        if (lockedAsset.uploadStatus === "VERIFIED" && already !== null) {
+          if (
+            already.evidence.type === type &&
+            already.evidence.title === title &&
+            already.evidence.description === description &&
+            sameDate(already.evidence.occurredAt, input.occurredAt ?? null) &&
+            already.evidence.visibility === visibility
+          ) {
             return already;
           }
+          throw new ConflictError("Evidence upload was already confirmed with different metadata.");
+        }
+        if (lockedAsset.uploadStatus !== "VERIFYING") {
           throw new ConflictError("Evidence upload is not pending.");
         }
-        const verified = await transaction.verifyMediaAsset({
+
+        const finalized = await transaction.finalizeMediaAssetVerification({
           tenantId: input.tenantId,
           projectId: input.projectId,
           assetId: input.assetId,
@@ -235,14 +298,15 @@ export class EvidenceUseCases {
           etag: promotedEtag,
           now: this.clock.now()
         });
-        if (verified === null) {
+        if (finalized === null) {
           throw new ConflictError("Evidence upload changed concurrently.");
         }
+
         const evidence = await transaction.insertEvidence({
           id: this.ids.generate(),
           tenantId: input.tenantId,
           projectId: input.projectId,
-          mediaAssetId: input.assetId,
+          mediaAssetId: lockedAsset.id,
           type,
           title,
           description,
@@ -253,11 +317,11 @@ export class EvidenceUseCases {
         await transaction.appendAuditEvent(evidenceAuditEvent({
           id: this.ids.generate(),
           tenantId: input.tenantId,
-          resourceId: input.assetId,
+          resourceId: lockedAsset.id,
           action: "evidence.upload_verified",
           actorAccountId: input.actor.account.id,
           requestId: input.requestId,
-          metadata: safeEvidenceMetadata(input.projectId, input.assetId, evidence.id, verified.mime, verified.byteSize, verified.classification)
+          metadata: safeEvidenceMetadata(input.projectId, lockedAsset.id, evidence.id, pending.mime, pending.byteSize, pending.classification)
         }));
         await transaction.appendAuditEvent(evidenceAuditEvent({
           id: this.ids.generate(),
@@ -266,7 +330,7 @@ export class EvidenceUseCases {
           action: "evidence.created",
           actorAccountId: input.actor.account.id,
           requestId: input.requestId,
-          metadata: safeEvidenceMetadata(input.projectId, input.assetId, evidence.id, verified.mime, verified.byteSize, verified.classification)
+          metadata: safeEvidenceMetadata(input.projectId, lockedAsset.id, evidence.id, pending.mime, pending.byteSize, pending.classification)
         }));
         const details = await transaction.findEvidenceDetails(input.tenantId, input.projectId, evidence.id);
         if (details === null) {
@@ -275,12 +339,12 @@ export class EvidenceUseCases {
         return details;
       });
     } catch (dbError) {
-      // Object storage and PostgreSQL are not atomic. If the permanent copy
-      // exists but DB finalization fails, cleanup is best-effort and the DB
-      // error remains the authoritative failure.
-      await this.storage.deleteObject(permanentKey).catch(() => undefined);
+      if (dbError instanceof ValidationError || dbError instanceof ConflictError || dbError instanceof NotFoundError) {
+        throw dbError;
+      }
       throw dbError;
     }
+
     await this.storage.deleteObject(requireKey(pending.temporaryObjectKey)).catch(() => undefined);
     return created;
   }
@@ -297,13 +361,20 @@ export class EvidenceUseCases {
       if (project === null) {
         throw new NotFoundError("Project not found.");
       }
-      assertEvidencePolicy(input.actor, "evidence.read", project, "P3", this.clock.now());
-      return transaction.listEvidence({
+      const now = this.clock.now();
+      assertEvidencePolicy(input.actor, "evidence.read", project, "P3", now);
+      const page = await transaction.listEvidence({
         tenantId: input.tenantId,
         projectId: input.projectId,
         limit: input.limit,
         cursor: input.cursor
       });
+      return {
+        ...page,
+        capabilities: {
+          canCreate: canCreateEvidence(input.actor, project, now)
+        }
+      };
     });
   }
 
@@ -317,32 +388,36 @@ export class EvidenceUseCases {
         throw new NotFoundError("Evidence not found.");
       }
       assertEvidencePolicy(input.actor, "evidence.download", loaded.project, loaded.media.classification, this.clock.now());
-      await transaction.appendAuditEvent(evidenceAuditEvent({
-        id: this.ids.generate(),
-        tenantId: input.tenantId,
-        resourceId: loaded.evidence.id,
-        action: "evidence.download_url_issued",
-        actorAccountId: input.actor.account.id,
-        requestId: input.requestId,
-        metadata: safeEvidenceMetadata(
-          loaded.project.projectId,
-          loaded.media.id,
-          loaded.evidence.id,
-          loaded.media.mime,
-          loaded.media.byteSize,
-          loaded.media.classification
-        )
-      }));
       return loaded;
     });
     const signed = await this.storage.createDownloadUrl({
       key: requireKey(details.media.objectKey),
       expiresInSeconds: evidenceDownloadUrlTtlSeconds
     });
+    await this.repository.transaction(async (transaction) => {
+      await transaction.appendAuditEvent(evidenceAuditEvent({
+        id: this.ids.generate(),
+        tenantId: input.tenantId,
+        resourceId: details.evidence.id,
+        action: "evidence.download_url_issued",
+        actorAccountId: input.actor.account.id,
+        requestId: input.requestId,
+        metadata: safeEvidenceMetadata(
+          details.project.projectId,
+          details.media.id,
+          details.evidence.id,
+          details.media.mime,
+          details.media.byteSize,
+          details.media.classification
+        )
+      }));
+    });
     return { url: signed.url, expiresAt: signed.expiresAt };
   }
 
-  private async verifyAndPromoteObject(asset: MediaAssetRecord, permanentKey: string): Promise<string | null> {
+  private async verifyEvidenceObject(asset: MediaAssetRecord): Promise<{
+    readonly promotedEtag: string;
+  }> {
     const tempKey = requireKey(asset.temporaryObjectKey);
     const head = await this.storage.headObject(tempKey);
     if (head === null) {
@@ -354,19 +429,26 @@ export class EvidenceUseCases {
     if (head.byteSize !== asset.byteSize) {
       throw new ValidationError("Evidence upload size mismatch.", "SIZE_MISMATCH", 422);
     }
-    if (head.checksumSha256Base64 !== sha256HexToBase64(asset.sha256)) {
-      throw new ValidationError("Evidence upload checksum mismatch.", "CHECKSUM_MISMATCH", 422);
-    }
     if (head.etag === null) {
-      throw new ValidationError("Evidence upload ETag is missing.", "PROMOTION_FAILED", 422);
+      throw new ApplicationError("Evidence upload ETag is missing.", "EVIDENCE_STORAGE_UNAVAILABLE", 503);
     }
-    // R2 has verified the checksum header for the full object. Magic-byte
-    // inspection covers the remaining trust boundary: MIME/extension spoofing.
-    const prefix = await this.storage.readObjectPrefix(tempKey, 16);
-    if (prefix === null) {
+    const bytes = await this.storage.readObjectForVerification({
+      key: tempKey,
+      expectedEtag: head.etag,
+      maxBytes: asset.byteSize
+    });
+    if (bytes === null) {
       throw new ValidationError("Evidence upload object not found.", "OBJECT_NOT_FOUND", 422);
     }
-    domainValidation(() => assertEvidenceMagicBytes(asset.mime, prefix));
+    if (bytes.length !== asset.byteSize) {
+      throw new ValidationError("Evidence upload size mismatch.", "SIZE_MISMATCH", 422);
+    }
+    domainValidation(() => assertEvidenceMagicBytes(asset.mime, bytes));
+    const actualSha256 = await sha256Hex(bytes);
+    if (actualSha256 !== asset.sha256) {
+      throw new ValidationError("Evidence upload checksum mismatch.", "CHECKSUM_MISMATCH", 422);
+    }
+    const permanentKey = permanentEvidenceKey(asset.tenantId, asset.id, asset.temporaryObjectKey);
     await this.storage.promoteObject({
       sourceKey: tempKey,
       destinationKey: permanentKey,
@@ -378,11 +460,25 @@ export class EvidenceUseCases {
       promoted === null ||
       promoted.byteSize !== asset.byteSize ||
       promoted.contentType !== asset.mime ||
-      promoted.checksumSha256Base64 !== sha256HexToBase64(asset.sha256)
+      promoted.etag === null
     ) {
-      throw new ValidationError("Evidence promotion failed.", "PROMOTION_FAILED", 422);
+      throw new ApplicationError("Evidence promotion state is ambiguous.", "EVIDENCE_PROMOTION_AMBIGUOUS", 503);
     }
-    return promoted.etag;
+    return { promotedEtag: promoted.etag };
+  }
+
+  private async resetVerificationClaim(tenantId: string, projectId: string, assetId: string): Promise<void> {
+    await this.repository.transaction(async (transaction) => {
+      const asset = await transaction.findMediaAssetForUpdate(tenantId, projectId, assetId);
+      if (asset !== null && asset.uploadStatus === "VERIFYING") {
+        await transaction.resetMediaAssetVerification({
+          tenantId,
+          projectId,
+          assetId,
+          now: this.clock.now()
+        });
+      }
+    });
   }
 
   private async rejectAsset(
@@ -440,6 +536,21 @@ function assertEvidencePolicy(
   }
 }
 
+function canCreateEvidence(actor: ActorContext, project: EvidenceProjectResource, now: Date): boolean {
+  if (!["DRAFT", "CHANGES_REQUESTED", "APPROVED_FOR_EXECUTION"].includes(project.status)) {
+    return false;
+  }
+  return canAccessEvidence(actor, "evidence.create", {
+    tenantId: project.tenantId,
+    projectId: project.projectId,
+    ownerOrganizationId: project.ownerOrganizationId,
+    ownerOrganizationPath: project.ownerOrganizationPath,
+    projectStatus: project.status,
+    classification: "P3",
+    createdByAccountId: project.createdByAccountId
+  }, { now }).effect === "allow";
+}
+
 function temporaryEvidenceKey(tenantId: string, assetId: string, nonce: string): string {
   return `tmp/evidence/${tenantId}/${assetId}/${nonce}`;
 }
@@ -452,15 +563,17 @@ function permanentEvidenceKey(tenantId: string, assetId: string, temporaryObject
   return `evidence/${tenantId}/${assetId}/${nonce}`;
 }
 
-function sha256HexToBase64(hex: string): string {
-  return Buffer.from(hex, "hex").toString("base64");
-}
-
 function requireKey(key: string | null): string {
   if (key === null || key.length === 0) {
     throw new Error("Object key is missing.");
   }
   return key;
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  const digest = await crypto.subtle.digest("SHA-256", buffer);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function safeEvidenceMetadata(
@@ -503,6 +616,14 @@ function evidenceAuditEvent(input: {
 }
 
 function rejectionCodeFrom(error: unknown): EvidenceRejectionCode {
+  if (error instanceof ObjectStorageError) {
+    if (error.code === "SOURCE_CHANGED") {
+      return "SOURCE_CHANGED";
+    }
+    if (error.code === "OBJECT_NOT_FOUND") {
+      return "OBJECT_NOT_FOUND";
+    }
+  }
   if (error instanceof EvidenceDomainError) {
     return error.code === "MAGIC_BYTES_MISMATCH" ? "MAGIC_BYTES_MISMATCH" : "MIME_MISMATCH";
   }
@@ -510,6 +631,11 @@ function rejectionCodeFrom(error: unknown): EvidenceRejectionCode {
     return error.code;
   }
   return "PROMOTION_FAILED";
+}
+
+function isStorageUnavailableError(error: unknown): boolean {
+  return (error instanceof ObjectStorageError && error.code === "STORAGE_UNAVAILABLE") ||
+    (error instanceof ApplicationError && error.code === "EVIDENCE_STORAGE_UNAVAILABLE");
 }
 
 function isEvidenceRejectionCode(code: string): code is EvidenceRejectionCode {
@@ -520,6 +646,7 @@ function isEvidenceRejectionCode(code: string): code is EvidenceRejectionCode {
     "MAGIC_BYTES_MISMATCH",
     "MIME_MISMATCH",
     "UPLOAD_EXPIRED",
+    "SOURCE_CHANGED",
     "PROMOTION_FAILED",
     "UPLOAD_SIGNING_FAILED"
   ].includes(code);

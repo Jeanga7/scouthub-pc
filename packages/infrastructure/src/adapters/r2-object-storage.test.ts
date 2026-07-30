@@ -13,17 +13,44 @@ describe("R2 object storage adapter", () => {
     const signed = await storage.createUploadUrl({
       key: "tmp/evidence/tenant/asset/random",
       contentType: "image/png",
-      checksumSha256Base64: "checksum",
       expiresInSeconds: 300
     });
 
     expect(signed.method).toBe("PUT");
     expect(signed.requiredHeaders).toEqual({
-      "Content-Type": "image/png",
-      "x-amz-checksum-sha256": "checksum"
+      "Content-Type": "image/png"
     });
     expect(new URL(signed.url).searchParams.get("X-Amz-Expires")).toBe("300");
     expect(signed.url).not.toContain("secret");
+  });
+
+  it("reads verification bytes with If-Match", async () => {
+    const requests: Request[] = [];
+    const fetcher: typeof fetch = (input) => {
+      requests.push(input instanceof Request ? input : new Request(input));
+      return Promise.resolve(new Response(Uint8Array.from([1, 2, 3]), { status: 206 }));
+    };
+    const storage = createR2ObjectStorageAdapter({
+      accountId: "account",
+      bucketName: "bucket",
+      accessKeyId: "access",
+      secretAccessKey: "secret",
+      fetch: fetcher
+    });
+
+    const bytes = await storage.readObjectForVerification({
+      key: "tmp/evidence/tenant/asset/random",
+      expectedEtag: "\"etag\"",
+      maxBytes: 64
+    });
+
+    expect(Array.from(bytes ?? [])).toEqual([1, 2, 3]);
+    const request = requests[0];
+    if (request === undefined) {
+      throw new Error("Expected fetch request.");
+    }
+    expect(request.headers.get("if-match")).toBe("\"etag\"");
+    expect(request.headers.get("range")).toBe("bytes=0-63");
   });
 
   it("uses conditional CopyObject headers for promotion", async () => {

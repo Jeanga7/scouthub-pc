@@ -13,10 +13,25 @@ export interface ObjectHead {
   readonly etag: string | null;
 }
 
+export type ObjectStorageErrorCode =
+  | "OBJECT_NOT_FOUND"
+  | "SOURCE_CHANGED"
+  | "STORAGE_UNAVAILABLE"
+  | "SIGNING_FAILED";
+
+export class ObjectStorageError extends Error {
+  constructor(
+    message: string,
+    readonly code: ObjectStorageErrorCode
+  ) {
+    super(message);
+    this.name = "ObjectStorageError";
+  }
+}
+
 export interface CreateUploadUrlInput {
   readonly key: string;
   readonly contentType: string;
-  readonly checksumSha256Base64: string;
   readonly expiresInSeconds: number;
 }
 
@@ -36,7 +51,11 @@ export interface ObjectStorage {
   createUploadUrl(input: CreateUploadUrlInput): Promise<SignedObjectUrl>;
   createDownloadUrl(input: CreateDownloadUrlInput): Promise<SignedObjectUrl>;
   headObject(key: string): Promise<ObjectHead | null>;
-  readObjectPrefix(key: string, byteLength: number): Promise<Uint8Array | null>;
+  readObjectForVerification(input: {
+    readonly key: string;
+    readonly expectedEtag: string;
+    readonly maxBytes: number;
+  }): Promise<Uint8Array | null>;
   promoteObject(input: PromoteObjectInput): Promise<void>;
   deleteObject(key: string): Promise<void>;
 }

@@ -43,6 +43,13 @@
       "when": 1785032660822,
       "tag": "0005_evidence_r2",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785444879970,
+      "tag": "0006_aromatic_scorpion",
+      "breakpoints": true
     }
   ]
 }
