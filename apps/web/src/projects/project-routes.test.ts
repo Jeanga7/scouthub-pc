@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import type { ActorContext, EvidenceDetails, EvidenceUseCases, ProjectDetails, ProjectUseCases } from "@scouthub/application";
 import { ApplicationError, ConflictError, NotFoundError, ValidationError } from "@scouthub/application";
-import type { ProjectResponse } from "@scouthub/contracts";
+import { evidenceResponseSchema, type ProjectResponse } from "@scouthub/contracts";
 
 vi.mock("@/identity/http", () => ({
   requireActor: vi.fn()
@@ -642,7 +643,10 @@ describe("project route handlers", () => {
       `http://localhost/api/v1/projects/${projectId}/evidence/uploads/${evidenceId}/confirm`,
       { tenantId, type: "PHOTO", title: "Photo synthetique" }
     ), confirmParams(projectId, evidenceId));
-    const body = await response.json() as { readonly data: EvidenceDetails; readonly request_id: string };
+    const body = z.object({
+      data: evidenceResponseSchema,
+      request_id: z.string()
+    }).parse(await response.json());
 
     expect(response.status).toBe(201);
     expect(body.data.id).toBe(evidenceId);

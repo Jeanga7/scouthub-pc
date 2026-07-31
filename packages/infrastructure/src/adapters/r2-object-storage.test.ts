@@ -45,6 +45,34 @@ describe("R2 object storage adapter", () => {
     signSpy.mockRestore();
   });
 
+  it("maps HEAD and copy signing failures to SIGNING_FAILED without leaking secrets", async () => {
+    const signSpy = vi.spyOn(AwsClient.prototype, "sign").mockRejectedValueOnce(new Error("sign failed"));
+    const storage = createR2ObjectStorageAdapter({
+      accountId: "account",
+      bucketName: "bucket",
+      accessKeyId: "access",
+      secretAccessKey: "secret"
+    });
+
+    await expect(storage.headObject("tmp/evidence/tenant/asset/random")).rejects.toMatchObject({
+      name: "ObjectStorageError",
+      code: "SIGNING_FAILED"
+    });
+    signSpy.mockRestore();
+
+    const copySignSpy = vi.spyOn(AwsClient.prototype, "sign").mockRejectedValueOnce(new Error("sign failed"));
+    await expect(storage.promoteObject({
+      sourceKey: "tmp/evidence/tenant/asset/random",
+      destinationKey: "evidence/tenant/asset/random",
+      sourceEtag: "\"etag\"",
+      contentType: "application/pdf"
+    })).rejects.toMatchObject({
+      name: "ObjectStorageError",
+      code: "SIGNING_FAILED"
+    });
+    copySignSpy.mockRestore();
+  });
+
   it("reads verification bytes with If-Match", async () => {
     const requests: Request[] = [];
     const fetcher: typeof fetch = (input) => {
@@ -102,6 +130,36 @@ describe("R2 object storage adapter", () => {
       expectedEtag: "\"etag\"",
       maxBytes: 64
     })).rejects.toMatchObject({ code: "STORAGE_UNAVAILABLE" });
+  });
+
+  it("maps network failures during verification and copy to storage unavailable", async () => {
+    const failingFetch: typeof fetch = () => Promise.reject(new Error("network"));
+    const storage = createR2ObjectStorageAdapter({
+      accountId: "account",
+      bucketName: "bucket",
+      accessKeyId: "access",
+      secretAccessKey: "secret",
+      fetch: failingFetch
+    });
+
+    await expect(storage.headObject("tmp/evidence/tenant/asset/random")).rejects.toMatchObject({
+      code: "STORAGE_UNAVAILABLE"
+    });
+    await expect(storage.readObjectForVerification({
+      key: "tmp/evidence/tenant/asset/random",
+      expectedEtag: "\"etag\"",
+      maxBytes: 64
+    })).rejects.toMatchObject({
+      code: "STORAGE_UNAVAILABLE"
+    });
+    await expect(storage.promoteObject({
+      sourceKey: "tmp/evidence/tenant/asset/random",
+      destinationKey: "evidence/tenant/asset/random",
+      sourceEtag: "\"etag\"",
+      contentType: "application/pdf"
+    })).rejects.toMatchObject({
+      code: "STORAGE_UNAVAILABLE"
+    });
   });
 
   it("uses conditional CopyObject headers for promotion", async () => {

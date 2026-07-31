@@ -28,6 +28,12 @@ export class FakeObjectStorage implements ObjectStorage {
   deleteCalls = 0;
   uploadSignCalls = 0;
   downloadSignCalls = 0;
+  failTempHead = false;
+  failTempRead = false;
+  failCopyBeforeRequest = false;
+  failCopyAmbiguous = false;
+  failPermanentHeadSigning = false;
+  failPermanentHeadUnavailable = false;
   failUploadSigning = false;
   failDownloadSigning = false;
   failHead = false;
@@ -69,6 +75,15 @@ export class FakeObjectStorage implements ObjectStorage {
 
   headObject(key: string): Promise<ObjectHead | null> {
     this.headCalls += 1;
+    if (this.isTemporaryKey(key) && this.failTempHead) {
+      return Promise.reject(new ObjectStorageError("fake temporary head signing failure", "SIGNING_FAILED"));
+    }
+    if (this.isPermanentKey(key) && this.failPermanentHeadSigning) {
+      return Promise.reject(new ObjectStorageError("fake permanent head signing failure", "SIGNING_FAILED"));
+    }
+    if (this.isPermanentKey(key) && this.failPermanentHeadUnavailable) {
+      return Promise.reject(new ObjectStorageError("fake permanent head failure", "STORAGE_UNAVAILABLE"));
+    }
     if (this.failHead) {
       return Promise.reject(new ObjectStorageError("fake head failure", "STORAGE_UNAVAILABLE"));
     }
@@ -90,6 +105,9 @@ export class FakeObjectStorage implements ObjectStorage {
     readonly maxBytes: number;
   }): Promise<Uint8Array | null> {
     this.readCalls += 1;
+    if (this.isTemporaryKey(input.key) && this.failTempRead) {
+      return Promise.reject(new ObjectStorageError("fake temporary read signing failure", "SIGNING_FAILED"));
+    }
     if (this.failRead) {
       return Promise.reject(new ObjectStorageError("fake read failure", "STORAGE_UNAVAILABLE"));
     }
@@ -105,6 +123,12 @@ export class FakeObjectStorage implements ObjectStorage {
 
   promoteObject(input: PromoteObjectInput): Promise<void> {
     this.promoteCalls += 1;
+    if (this.failCopyBeforeRequest) {
+      return Promise.reject(new ObjectStorageError("fake copy signing failure", "SIGNING_FAILED"));
+    }
+    if (this.failCopyAmbiguous) {
+      return Promise.reject(new ObjectStorageError("fake copy failure", "STORAGE_UNAVAILABLE"));
+    }
     if (this.failPromotion) {
       return Promise.reject(new ObjectStorageError("fake promotion failure", "STORAGE_UNAVAILABLE"));
     }
@@ -125,5 +149,13 @@ export class FakeObjectStorage implements ObjectStorage {
     this.deletedKeys.push(key);
     this.objects.delete(key);
     return Promise.resolve();
+  }
+
+  private isTemporaryKey(key: string): boolean {
+    return key.startsWith("tmp/evidence/");
+  }
+
+  private isPermanentKey(key: string): boolean {
+    return key.startsWith("evidence/");
   }
 }

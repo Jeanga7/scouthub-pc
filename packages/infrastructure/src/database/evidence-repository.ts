@@ -320,7 +320,7 @@ class PgEvidenceTransaction implements EvidenceTransaction {
            verified_at = NULL,
            rejected_at = NULL,
            rejection_code = NULL,
-           updated_at = now()
+           updated_at = $4
        WHERE tenant_id = $1
          AND project_id = $2
          AND id = $3

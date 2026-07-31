@@ -217,7 +217,20 @@ export class EvidenceUseCases {
         if (rejected === null) {
           throw new ConflictError("Evidence upload is not pending.");
         }
-        throw new ValidationError("Evidence upload expired.", "UPLOAD_EXPIRED", 422);
+        await transaction.appendAuditEvent(evidenceAuditEvent({
+          id: this.ids.generate(),
+          tenantId: input.tenantId,
+          resourceId: asset.id,
+          action: "evidence.upload_rejected",
+          actorAccountId: input.actor.account.id,
+          requestId: input.requestId,
+          metadata: {
+            project_id: input.projectId,
+            asset_id: asset.id,
+            rejection_code: "UPLOAD_EXPIRED"
+          }
+        }));
+        return { kind: "expired" as const };
       }
 
       domainValidation(() => assertEvidenceMimeMatchesType(type, asset.mime));
@@ -237,6 +250,9 @@ export class EvidenceUseCases {
     if (claim.kind === "existing") {
       return claim.existing;
     }
+    if (claim.kind === "expired") {
+      throw new ValidationError("Evidence upload expired.", "UPLOAD_EXPIRED", 422);
+    }
 
     const pending = claim.asset;
     const permanentKey = permanentEvidenceKey(input.tenantId, pending.id, pending.temporaryObjectKey);
@@ -247,11 +263,17 @@ export class EvidenceUseCases {
       await this.handleTemporaryVerificationFailure(error, input, pending);
     }
 
+    try {
+      await this.promoteVerifiedObject(pending, verification.tempEtag, permanentKey);
+    } catch (error) {
+      await this.handlePromotionRequestFailure(error, input, pending);
+    }
+
     let promotedEtag!: string;
     try {
-      promotedEtag = await this.promoteVerifiedObject(pending, verification.tempEtag);
+      promotedEtag = await this.verifyPermanentObject(pending, permanentKey);
     } catch (error) {
-      await this.handlePromotionFailure(error, input, pending);
+      this.handlePostPromotionVerificationFailure(error);
     }
 
     const created = await this.finalizePromotedEvidence(input, pending, permanentKey, promotedEtag, type, title, description, visibility);
@@ -369,16 +391,14 @@ export class EvidenceUseCases {
     return { tempEtag: head.etag };
   }
 
-  private async promoteVerifiedObject(asset: MediaAssetRecord, sourceEtag: string): Promise<string> {
+  private async promoteVerifiedObject(asset: MediaAssetRecord, sourceEtag: string, permanentKey: string): Promise<void> {
     const tempKey = requireKey(asset.temporaryObjectKey);
-    const permanentKey = permanentEvidenceKey(asset.tenantId, asset.id, asset.temporaryObjectKey);
     await this.storage.promoteObject({
       sourceKey: tempKey,
       destinationKey: permanentKey,
       sourceEtag,
       contentType: asset.mime
     });
-    return await this.verifyPermanentObject(asset, permanentKey);
   }
 
   private async verifyPermanentObject(asset: MediaAssetRecord, permanentKey: string): Promise<string> {
@@ -415,7 +435,7 @@ export class EvidenceUseCases {
     input: { readonly tenantId: string; readonly projectId: string; readonly actor: ActorContext; readonly requestId?: string },
     asset: MediaAssetRecord
   ): Promise<never> {
-    if (isStorageUnavailableError(error)) {
+    if (isPrePromotionStorageUnavailableError(error)) {
       await this.resetVerificationClaim(input.tenantId, input.projectId, asset.id);
       throw new ApplicationError("Evidence storage unavailable.", "EVIDENCE_STORAGE_UNAVAILABLE", 503);
     }
@@ -430,7 +450,7 @@ export class EvidenceUseCases {
     throw new ValidationError("Evidence upload verification failed.", rejectionCode, 422);
   }
 
-  private async handlePromotionFailure(
+  private async handlePromotionRequestFailure(
     error: unknown,
     input: { readonly tenantId: string; readonly projectId: string; readonly actor: ActorContext; readonly requestId?: string },
     asset: MediaAssetRecord
@@ -438,6 +458,14 @@ export class EvidenceUseCases {
     if (error instanceof ObjectStorageError && error.code === "SIGNING_FAILED") {
       await this.resetVerificationClaim(input.tenantId, input.projectId, asset.id);
       throw new ApplicationError("Evidence storage unavailable.", "EVIDENCE_STORAGE_UNAVAILABLE", 503);
+    }
+    if (error instanceof ObjectStorageError && error.code === "OBJECT_NOT_FOUND") {
+      await this.rejectAsset(input, asset.id, "OBJECT_NOT_FOUND");
+      throw new ValidationError("Evidence upload object not found.", "OBJECT_NOT_FOUND", 422);
+    }
+    if (error instanceof ObjectStorageError && error.code === "SOURCE_CHANGED") {
+      await this.rejectAsset(input, asset.id, "SOURCE_CHANGED");
+      throw new ValidationError("Evidence upload object changed.", "SOURCE_CHANGED", 422);
     }
     if (error instanceof ObjectStorageError && error.code === "STORAGE_UNAVAILABLE") {
       throw new ApplicationError("Evidence promotion state is ambiguous.", "EVIDENCE_PROMOTION_AMBIGUOUS", 503);
@@ -454,6 +482,16 @@ export class EvidenceUseCases {
       throw error;
     }
     throw new ValidationError("Evidence upload verification failed.", rejectionCode, 422);
+  }
+
+  private handlePostPromotionVerificationFailure(error: unknown): never {
+    if (error instanceof ApplicationError && error.code === "EVIDENCE_PROMOTION_AMBIGUOUS") {
+      throw error;
+    }
+    if (error instanceof ObjectStorageError || error instanceof Error) {
+      throw new ApplicationError("Evidence promotion state is ambiguous.", "EVIDENCE_PROMOTION_AMBIGUOUS", 503);
+    }
+    throw new ApplicationError("Evidence promotion state is ambiguous.", "EVIDENCE_PROMOTION_AMBIGUOUS", 503);
   }
 
   private async finalizePromotedEvidence(
@@ -703,8 +741,9 @@ function rejectionCodeFrom(error: unknown): EvidenceRejectionCode {
   return "PROMOTION_FAILED";
 }
 
-function isStorageUnavailableError(error: unknown): boolean {
-  return (error instanceof ObjectStorageError && error.code === "STORAGE_UNAVAILABLE") ||
+function isPrePromotionStorageUnavailableError(error: unknown): boolean {
+  return (error instanceof ObjectStorageError &&
+    (error.code === "SIGNING_FAILED" || error.code === "STORAGE_UNAVAILABLE")) ||
     (error instanceof ApplicationError && error.code === "EVIDENCE_STORAGE_UNAVAILABLE");
 }
 

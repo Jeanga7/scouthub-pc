@@ -76,4 +76,59 @@ describe("FakeObjectStorage", () => {
     expect(storage.promoteCalls).toBe(1);
     expect(storage.deleteCalls).toBe(1);
   });
+
+  it("simulates phase-specific verification failures", async () => {
+    const storage = new FakeObjectStorage();
+    storage.putObject("tmp/evidence/t/a/r", {
+      contentType: "image/png",
+      byteSize: 4,
+      checksumSha256Base64: "checksum",
+      etag: "\"temp-etag\"",
+      bytes: Uint8Array.from([0x89, 0x50, 0x4e, 0x47])
+    });
+    storage.putObject("evidence/t/a/r", {
+      contentType: "image/png",
+      byteSize: 4,
+      checksumSha256Base64: "checksum",
+      etag: "\"perm-etag\"",
+      bytes: Uint8Array.from([0x89, 0x50, 0x4e, 0x47])
+    });
+
+    storage.failTempHead = true;
+    await expect(storage.headObject("tmp/evidence/t/a/r")).rejects.toMatchObject({ code: "SIGNING_FAILED" });
+
+    storage.failTempHead = false;
+    storage.failTempRead = true;
+    await expect(storage.readObjectForVerification({
+      key: "tmp/evidence/t/a/r",
+      expectedEtag: "\"temp-etag\"",
+      maxBytes: 4
+    })).rejects.toMatchObject({ code: "SIGNING_FAILED" });
+
+    storage.failTempRead = false;
+    storage.failCopyBeforeRequest = true;
+    await expect(storage.promoteObject({
+      sourceKey: "tmp/evidence/t/a/r",
+      destinationKey: "evidence/t/a/r",
+      sourceEtag: "\"temp-etag\"",
+      contentType: "image/png"
+    })).rejects.toMatchObject({ code: "SIGNING_FAILED" });
+
+    storage.failCopyBeforeRequest = false;
+    storage.failCopyAmbiguous = true;
+    await expect(storage.promoteObject({
+      sourceKey: "tmp/evidence/t/a/r",
+      destinationKey: "evidence/t/a/r",
+      sourceEtag: "\"temp-etag\"",
+      contentType: "image/png"
+    })).rejects.toMatchObject({ code: "STORAGE_UNAVAILABLE" });
+
+    storage.failCopyAmbiguous = false;
+    storage.failPermanentHeadSigning = true;
+    await expect(storage.headObject("evidence/t/a/r")).rejects.toMatchObject({ code: "SIGNING_FAILED" });
+
+    storage.failPermanentHeadSigning = false;
+    storage.failPermanentHeadUnavailable = true;
+    await expect(storage.headObject("evidence/t/a/r")).rejects.toMatchObject({ code: "STORAGE_UNAVAILABLE" });
+  });
 });
