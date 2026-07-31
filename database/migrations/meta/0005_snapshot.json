@@ -1,6 +1,6 @@
 {
-  "id": "a065ea0c-083d-4f48-a8c5-33fc687a8551",
-  "prevId": "6435b1a5-f816-4515-91e4-252e1a970839",
+  "id": "5561ce4a-2ba9-4c79-929c-68808e131a00",
+  "prevId": "a065ea0c-083d-4f48-a8c5-33fc687a8551",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1609,17 +1609,21 @@
           "name": "media_asset_dimensions_positive",
           "value": "(\"media_asset\".\"width\" IS NULL OR \"media_asset\".\"width\" > 0) AND (\"media_asset\".\"height\" IS NULL OR \"media_asset\".\"height\" > 0)"
         },
+        "media_asset_pending_shape": {
+          "name": "media_asset_pending_shape",
+          "value": "\"media_asset\".\"upload_status\" <> 'PENDING_UPLOAD' OR (\"media_asset\".\"temporary_object_key\" IS NOT NULL AND \"media_asset\".\"object_key\" IS NULL AND \"media_asset\".\"verified_at\" IS NULL AND \"media_asset\".\"rejected_at\" IS NULL AND \"media_asset\".\"rejection_code\" IS NULL)"
+        },
+        "media_asset_verifying_shape": {
+          "name": "media_asset_verifying_shape",
+          "value": "\"media_asset\".\"upload_status\" <> 'VERIFYING' OR (\"media_asset\".\"temporary_object_key\" IS NOT NULL AND \"media_asset\".\"object_key\" IS NULL AND \"media_asset\".\"verified_at\" IS NULL AND \"media_asset\".\"rejected_at\" IS NULL AND \"media_asset\".\"rejection_code\" IS NULL)"
+        },
         "media_asset_verified_shape": {
           "name": "media_asset_verified_shape",
-          "value": "(\"media_asset\".\"upload_status\" = 'VERIFIED' AND \"media_asset\".\"object_key\" IS NOT NULL AND \"media_asset\".\"verified_at\" IS NOT NULL AND \"media_asset\".\"rejected_at\" IS NULL AND \"media_asset\".\"rejection_code\" IS NULL) OR (\"media_asset\".\"upload_status\" <> 'VERIFIED')"
+          "value": "\"media_asset\".\"upload_status\" <> 'VERIFIED' OR (\"media_asset\".\"temporary_object_key\" IS NOT NULL AND \"media_asset\".\"object_key\" IS NOT NULL AND \"media_asset\".\"verified_at\" IS NOT NULL AND \"media_asset\".\"rejected_at\" IS NULL AND \"media_asset\".\"rejection_code\" IS NULL)"
         },
         "media_asset_rejected_shape": {
           "name": "media_asset_rejected_shape",
-          "value": "(\"media_asset\".\"upload_status\" = 'REJECTED' AND \"media_asset\".\"rejected_at\" IS NOT NULL AND \"media_asset\".\"rejection_code\" IS NOT NULL) OR (\"media_asset\".\"upload_status\" <> 'REJECTED')"
-        },
-        "media_asset_pending_temp_key": {
-          "name": "media_asset_pending_temp_key",
-          "value": "(\"media_asset\".\"upload_status\" <> 'PENDING_UPLOAD' AND \"media_asset\".\"upload_status\" <> 'VERIFYING') OR \"media_asset\".\"temporary_object_key\" IS NOT NULL"
+          "value": "\"media_asset\".\"upload_status\" <> 'REJECTED' OR (\"media_asset\".\"object_key\" IS NULL AND \"media_asset\".\"verified_at\" IS NULL AND \"media_asset\".\"rejected_at\" IS NOT NULL AND \"media_asset\".\"rejection_code\" IS NOT NULL)"
         }
       },
       "isRLSEnabled": false

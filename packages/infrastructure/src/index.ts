@@ -14,6 +14,7 @@ export {
   createLocalObjectStorageAdapter,
   deleteLocalObject,
   getLocalObject,
+  localEtagFor,
   putLocalObject,
   type LocalObjectStorageConfig
 } from "./adapters/local-object-storage";

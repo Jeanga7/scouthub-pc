@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FakeObjectStorage } from "./fake-object-storage";
+import { ObjectStorageError } from "./object-storage";
 
 describe("FakeObjectStorage", () => {
   it("tracks calls and simulates storage errors", async () => {
@@ -34,5 +35,45 @@ describe("FakeObjectStorage", () => {
     expect(storage.deleteCalls).toBe(1);
     expect(storage.promoted).toHaveLength(1);
     expect(storage.deletedKeys).toContain("tmp/evidence/t/a/r");
+  });
+
+  it("simulates provider failures deterministically", async () => {
+    const storage = new FakeObjectStorage();
+    storage.failUploadSigning = true;
+    storage.failDownloadSigning = true;
+    storage.failHead = true;
+    storage.failRead = true;
+    storage.failPromotion = true;
+    storage.failDelete = true;
+
+    await expect(storage.createUploadUrl({
+      key: "tmp/evidence/t/a/r",
+      contentType: "image/png",
+      expiresInSeconds: 60
+    })).rejects.toBeInstanceOf(ObjectStorageError);
+    await expect(storage.createDownloadUrl({
+      key: "evidence/t/a/r",
+      expiresInSeconds: 60
+    })).rejects.toBeInstanceOf(ObjectStorageError);
+    await expect(storage.headObject("tmp/evidence/t/a/r")).rejects.toBeInstanceOf(ObjectStorageError);
+    await expect(storage.readObjectForVerification({
+      key: "tmp/evidence/t/a/r",
+      expectedEtag: "\"etag\"",
+      maxBytes: 4
+    })).rejects.toBeInstanceOf(ObjectStorageError);
+    await expect(storage.promoteObject({
+      sourceKey: "tmp/evidence/t/a/r",
+      destinationKey: "evidence/t/a/r",
+      sourceEtag: "\"etag\"",
+      contentType: "image/png"
+    })).rejects.toBeInstanceOf(ObjectStorageError);
+    await expect(storage.deleteObject("tmp/evidence/t/a/r")).rejects.toBeInstanceOf(ObjectStorageError);
+
+    expect(storage.uploadSignCalls).toBe(1);
+    expect(storage.downloadSignCalls).toBe(1);
+    expect(storage.headCalls).toBe(1);
+    expect(storage.readCalls).toBe(1);
+    expect(storage.promoteCalls).toBe(1);
+    expect(storage.deleteCalls).toBe(1);
   });
 });

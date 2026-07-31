@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { createLocalObjectStorageAdapter, deleteLocalObject, getLocalObject, putLocalObject } from "./local-object-storage";
+import {
+  createLocalObjectStorageAdapter,
+  deleteLocalObject,
+  getLocalObject,
+  localEtagFor,
+  putLocalObject
+} from "./local-object-storage";
 
 describe("Local object storage adapter", () => {
   it("serves local browser URLs and shared in-memory objects", async () => {
@@ -21,6 +27,7 @@ describe("Local object storage adapter", () => {
     });
 
     const head = await storage.headObject("tmp/evidence/tenant/asset/random");
+    expect(head?.etag).toBe(localEtagFor(Uint8Array.from([0xff, 0xd8, 0xff])));
     const bytes = await storage.readObjectForVerification({
       key: "tmp/evidence/tenant/asset/random",
       expectedEtag: getLocalObject({

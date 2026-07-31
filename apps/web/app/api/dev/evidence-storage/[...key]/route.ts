@@ -1,4 +1,4 @@
-import { deleteLocalObject, getLocalObject, putLocalObject } from "@scouthub/infrastructure";
+import { deleteLocalObject, getLocalObject, localEtagFor, putLocalObject } from "@scouthub/infrastructure";
 import { getServerEnv } from "@/env/server";
 
 export const dynamic = "force-dynamic";
@@ -87,8 +87,4 @@ function matchesIfMatch(request: Request, etag: string): boolean {
     return true;
   }
   return expected === etag;
-}
-
-function localEtagFor(bytes: Uint8Array): string {
-  return `"${bytes.byteLength.toString(16)}-${bytes[0] ?? 0}"`;
 }

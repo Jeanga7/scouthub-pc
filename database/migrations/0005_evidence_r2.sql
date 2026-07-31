@@ -88,18 +88,6 @@ FROM "role_definition" rd
 JOIN "permission_definition" pd ON pd.code IN ('evidence.read', 'evidence.download')
 WHERE rd.code = 'REGIONAL_PROGRAMME_REVIEWER'
 ON CONFLICT DO NOTHING;--> statement-breakpoint
-CREATE OR REPLACE FUNCTION reject_verified_media_asset_object_key_change()
-RETURNS trigger AS $$
-BEGIN
-  IF OLD.upload_status = 'VERIFIED' AND OLD.object_key IS DISTINCT FROM NEW.object_key THEN
-    RAISE EXCEPTION 'verified media asset object_key is immutable';
-  END IF;
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;--> statement-breakpoint
-CREATE TRIGGER media_asset_verified_object_key_immutable
-BEFORE UPDATE ON "media_asset"
-FOR EACH ROW EXECUTE FUNCTION reject_verified_media_asset_object_key_change();
 CREATE OR REPLACE FUNCTION reject_verified_media_asset_change()
 RETURNS trigger AS $$
 BEGIN
@@ -124,6 +112,18 @@ $$ LANGUAGE plpgsql;--> statement-breakpoint
 CREATE TRIGGER media_asset_verified_metadata_immutable
 BEFORE UPDATE ON "media_asset"
 FOR EACH ROW EXECUTE FUNCTION reject_verified_media_asset_change();
+CREATE OR REPLACE FUNCTION reject_terminal_media_asset_status_change()
+RETURNS trigger AS $$
+BEGIN
+  IF OLD.upload_status IN ('VERIFIED', 'REJECTED') AND NEW.upload_status IS DISTINCT FROM OLD.upload_status THEN
+    RAISE EXCEPTION 'terminal media asset upload_status is immutable';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;--> statement-breakpoint
+CREATE TRIGGER media_asset_terminal_status_blocked
+BEFORE UPDATE ON "media_asset"
+FOR EACH ROW EXECUTE FUNCTION reject_terminal_media_asset_status_change();--> statement-breakpoint
 CREATE OR REPLACE FUNCTION reject_evidence_delete()
 RETURNS trigger AS $$
 BEGIN

@@ -1,7 +1,5 @@
 import { AwsClient } from "aws4fetch";
-import {
-  ObjectStorageError
-} from "@scouthub/application";
+import { ObjectStorageError } from "@scouthub/application";
 import type {
   CreateDownloadUrlInput,
   CreateUploadUrlInput,
@@ -29,17 +27,10 @@ export function createR2ObjectStorageAdapter(config: R2ObjectStorageConfig): Obj
   const fetcher = config.fetch ?? fetch;
   const baseUrl = `https://${config.accountId}.r2.cloudflarestorage.com/${config.bucketName}`;
 
-  async function signedRequest(url: string, init: RequestInit): Promise<Response> {
-    const signed = await client.sign(url, init);
-    return fetcher(signed);
-  }
-
   return {
     async createUploadUrl(input: CreateUploadUrlInput): Promise<SignedObjectUrl> {
-      const headers = {
-        "Content-Type": input.contentType
-      };
-      const signed = await client.sign(objectUrl(baseUrl, input.key, input.expiresInSeconds), {
+      const headers = { "Content-Type": input.contentType };
+      const signed = await signRequest(client, objectUrl(baseUrl, input.key, input.expiresInSeconds), {
         method: "PUT",
         headers,
         aws: {
@@ -56,7 +47,7 @@ export function createR2ObjectStorageAdapter(config: R2ObjectStorageConfig): Obj
     },
 
     async createDownloadUrl(input: CreateDownloadUrlInput): Promise<SignedObjectUrl> {
-      const signed = await client.sign(objectUrl(baseUrl, input.key, input.expiresInSeconds), {
+      const signed = await signRequest(client, objectUrl(baseUrl, input.key, input.expiresInSeconds), {
         method: "GET",
         aws: {
           signQuery: true
@@ -71,12 +62,15 @@ export function createR2ObjectStorageAdapter(config: R2ObjectStorageConfig): Obj
     },
 
     async headObject(key: string): Promise<ObjectHead | null> {
-      const response = await signedRequest(objectUrl(baseUrl, key), { method: "HEAD" });
+      const response = await fetchSigned(client, fetcher, objectUrl(baseUrl, key), { method: "HEAD" });
       if (response.status === 404) {
         return null;
       }
+      if (response.status === 412) {
+        throw new ObjectStorageError("R2 source object changed.", "SOURCE_CHANGED");
+      }
       if (!response.ok) {
-        throw new Error(`R2 HEAD failed with status ${response.status}.`);
+        throw storageUnavailable(`R2 HEAD failed with status ${response.status}.`);
       }
       return {
         key,
@@ -92,7 +86,7 @@ export function createR2ObjectStorageAdapter(config: R2ObjectStorageConfig): Obj
       readonly expectedEtag: string;
       readonly maxBytes: number;
     }): Promise<Uint8Array | null> {
-      const response = await signedRequest(objectUrl(baseUrl, input.key), {
+      const response = await fetchSigned(client, fetcher, objectUrl(baseUrl, input.key), {
         method: "GET",
         headers: {
           Range: `bytes=0-${Math.max(0, input.maxBytes - 1)}`,
@@ -106,7 +100,7 @@ export function createR2ObjectStorageAdapter(config: R2ObjectStorageConfig): Obj
         throw new ObjectStorageError("R2 source object changed.", "SOURCE_CHANGED");
       }
       if (!response.ok) {
-        throw new ObjectStorageError(`R2 verification read failed with status ${response.status}.`, "STORAGE_UNAVAILABLE");
+        throw storageUnavailable(`R2 verification read failed with status ${response.status}.`);
       }
       return new Uint8Array(await response.arrayBuffer());
     },
@@ -115,7 +109,7 @@ export function createR2ObjectStorageAdapter(config: R2ObjectStorageConfig): Obj
       // Promotion is conditional on the ETag observed during verification. If
       // a replayed PUT replaces tmp/* between HEAD and CopyObject, R2 refuses
       // the copy and the accepted Evidence never points at mutable content.
-      const response = await signedRequest(objectUrl(baseUrl, input.destinationKey), {
+      const response = await fetchSigned(client, fetcher, objectUrl(baseUrl, input.destinationKey), {
         method: "PUT",
         headers: {
           "Content-Type": input.contentType,
@@ -123,18 +117,27 @@ export function createR2ObjectStorageAdapter(config: R2ObjectStorageConfig): Obj
           "x-amz-copy-source-if-match": input.sourceEtag
         }
       });
+      if (response.status === 404) {
+        throw new ObjectStorageError("R2 source object not found.", "OBJECT_NOT_FOUND");
+      }
       if (response.status === 412) {
         throw new ObjectStorageError("R2 source object changed.", "SOURCE_CHANGED");
       }
       if (!response.ok) {
-        throw new ObjectStorageError(`R2 copy failed with status ${response.status}.`, "STORAGE_UNAVAILABLE");
+        throw storageUnavailable(`R2 copy failed with status ${response.status}.`);
       }
     },
 
     async deleteObject(key: string): Promise<void> {
-      const response = await signedRequest(objectUrl(baseUrl, key), { method: "DELETE" });
-      if (!response.ok && response.status !== 404) {
-        throw new ObjectStorageError(`R2 delete failed with status ${response.status}.`, "STORAGE_UNAVAILABLE");
+      const response = await fetchSigned(client, fetcher, objectUrl(baseUrl, key), { method: "DELETE" });
+      if (response.status === 404) {
+        return;
+      }
+      if (response.status === 412) {
+        throw new ObjectStorageError("R2 source object changed.", "SOURCE_CHANGED");
+      }
+      if (!response.ok) {
+        throw storageUnavailable(`R2 delete failed with status ${response.status}.`);
       }
     }
   };
@@ -150,4 +153,30 @@ function objectUrl(baseUrl: string, key: string, expiresInSeconds?: number): str
 
 function encodeObjectKey(key: string): string {
   return key.split("/").map(encodeURIComponent).join("/");
+}
+
+async function signRequest(client: AwsClient, url: string, init: Parameters<AwsClient["sign"]>[1]): Promise<Request> {
+  try {
+    return await client.sign(url, init);
+  } catch {
+    throw new ObjectStorageError("R2 signing failed.", "SIGNING_FAILED");
+  }
+}
+
+async function fetchSigned(
+  client: AwsClient,
+  fetcher: typeof fetch,
+  url: string,
+  init: Parameters<AwsClient["sign"]>[1]
+): Promise<Response> {
+  const signed = await signRequest(client, url, init);
+  try {
+    return await fetcher(signed);
+  } catch {
+    throw storageUnavailable("R2 request failed.");
+  }
+}
+
+function storageUnavailable(message: string): ObjectStorageError {
+  return new ObjectStorageError(message, "STORAGE_UNAVAILABLE");
 }

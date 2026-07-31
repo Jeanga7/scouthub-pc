@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ActorContext, EvidenceDetails, EvidenceUseCases, ProjectDetails, ProjectUseCases } from "@scouthub/application";
-import { ConflictError, NotFoundError, ValidationError } from "@scouthub/application";
+import { ApplicationError, ConflictError, NotFoundError, ValidationError } from "@scouthub/application";
 import type { ProjectResponse } from "@scouthub/contracts";
 
 vi.mock("@/identity/http", () => ({
@@ -34,6 +34,7 @@ import { GET as GET_REVIEWS } from "../../app/api/v1/reviews/route";
 import { POST as INITIATE_EVIDENCE_UPLOAD } from "../../app/api/v1/projects/[id]/evidence/upload-url/route";
 import { GET as LIST_EVIDENCE } from "../../app/api/v1/projects/[id]/evidence/route";
 import { POST as CREATE_EVIDENCE_DOWNLOAD_URL } from "../../app/api/v1/projects/[id]/evidence/[evidenceId]/download-url/route";
+import { POST as CONFIRM_EVIDENCE_UPLOAD } from "../../app/api/v1/projects/[id]/evidence/uploads/[assetId]/confirm/route";
 
 const tenantId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
 const projectId = "dddddddd-dddd-4ddd-8ddd-ddddddddddd1";
@@ -493,6 +494,161 @@ describe("project route handlers", () => {
     expect(body.request_id).toHaveLength(36);
     expect(response.headers.get("cache-control")).toBe("no-store");
   });
+
+  it("returns 401 for anonymous Evidence confirm", async () => {
+    mockAnonymous();
+    mockEvidenceUseCases({});
+
+    const response = await CONFIRM_EVIDENCE_UPLOAD(jsonRequest(
+      `http://localhost/api/v1/projects/${projectId}/evidence/uploads/${evidenceId}/confirm`,
+      { tenantId, type: "PHOTO", title: "Photo synthetique" }
+    ), confirmParams(projectId, evidenceId));
+
+    expect(response.status).toBe(401);
+  });
+
+  it("rejects invalid Evidence confirm payload before use case access", async () => {
+    mockActor();
+    mockEvidenceUseCases({});
+
+    const response = await CONFIRM_EVIDENCE_UPLOAD(jsonRequest(
+      `http://localhost/api/v1/projects/${projectId}/evidence/uploads/${evidenceId}/confirm`,
+      { tenantId, title: "Photo synthetique" }
+    ), confirmParams(projectId, evidenceId));
+
+    expect(response.status).toBe(400);
+    expect((await problem(response)).request_id).toHaveLength(36);
+  });
+
+  it("maps cross-scope confirm denial to 403", async () => {
+    mockActor();
+    mockEvidenceUseCases({
+      confirmEvidenceUpload: vi.fn().mockRejectedValue(
+        new ValidationError("Permission denied.", "NO_MATCHING_ACTIVE_ASSIGNMENT", 403)
+      )
+    });
+
+    const response = await CONFIRM_EVIDENCE_UPLOAD(jsonRequest(
+      `http://localhost/api/v1/projects/${projectId}/evidence/uploads/${evidenceId}/confirm`,
+      { tenantId, type: "PHOTO", title: "Photo synthetique" }
+    ), confirmParams(projectId, evidenceId));
+
+    expect(response.status).toBe(403);
+  });
+
+  it("maps expired confirm to 422", async () => {
+    mockActor();
+    mockEvidenceUseCases({
+      confirmEvidenceUpload: vi.fn().mockRejectedValue(
+        new ValidationError("Evidence upload expired.", "UPLOAD_EXPIRED", 422)
+      )
+    });
+
+    const response = await CONFIRM_EVIDENCE_UPLOAD(jsonRequest(
+      `http://localhost/api/v1/projects/${projectId}/evidence/uploads/${evidenceId}/confirm`,
+      { tenantId, type: "PHOTO", title: "Photo synthetique" }
+    ), confirmParams(projectId, evidenceId));
+
+    expect(response.status).toBe(422);
+  });
+
+  it("maps rejected confirm to 409", async () => {
+    mockActor();
+    mockEvidenceUseCases({
+      confirmEvidenceUpload: vi.fn().mockRejectedValue(
+        new ConflictError("Evidence upload has already been rejected.")
+      )
+    });
+
+    const response = await CONFIRM_EVIDENCE_UPLOAD(jsonRequest(
+      `http://localhost/api/v1/projects/${projectId}/evidence/uploads/${evidenceId}/confirm`,
+      { tenantId, type: "PHOTO", title: "Photo synthetique" }
+    ), confirmParams(projectId, evidenceId));
+
+    expect(response.status).toBe(409);
+  });
+
+  it("maps verified confirm with different metadata to 409", async () => {
+    mockActor();
+    mockEvidenceUseCases({
+      confirmEvidenceUpload: vi.fn().mockRejectedValue(
+        new ConflictError("Evidence upload was already confirmed with different metadata.")
+      )
+    });
+
+    const response = await CONFIRM_EVIDENCE_UPLOAD(jsonRequest(
+      `http://localhost/api/v1/projects/${projectId}/evidence/uploads/${evidenceId}/confirm`,
+      { tenantId, type: "PHOTO", title: "Photo synthetique diff" }
+    ), confirmParams(projectId, evidenceId));
+
+    expect(response.status).toBe(409);
+  });
+
+  it("maps verifying confirm to 409", async () => {
+    mockActor();
+    mockEvidenceUseCases({
+      confirmEvidenceUpload: vi.fn().mockRejectedValue(
+        new ValidationError("Evidence verification is already in progress.", "EVIDENCE_VERIFICATION_IN_PROGRESS", 409)
+      )
+    });
+
+    const response = await CONFIRM_EVIDENCE_UPLOAD(jsonRequest(
+      `http://localhost/api/v1/projects/${projectId}/evidence/uploads/${evidenceId}/confirm`,
+      { tenantId, type: "PHOTO", title: "Photo synthetique" }
+    ), confirmParams(projectId, evidenceId));
+
+    expect(response.status).toBe(409);
+  });
+
+  it("returns 503 when confirm storage is unavailable", async () => {
+    mockActor();
+    mockEvidenceUseCases({
+      confirmEvidenceUpload: vi.fn().mockRejectedValue(
+        new ApplicationError("Evidence storage unavailable.", "EVIDENCE_STORAGE_UNAVAILABLE", 503)
+      )
+    });
+
+    const response = await CONFIRM_EVIDENCE_UPLOAD(jsonRequest(
+      `http://localhost/api/v1/projects/${projectId}/evidence/uploads/${evidenceId}/confirm`,
+      { tenantId, type: "PHOTO", title: "Photo synthetique" }
+    ), confirmParams(projectId, evidenceId));
+
+    expect(response.status).toBe(503);
+  });
+
+  it("returns 503 when confirm promotion is ambiguous", async () => {
+    mockActor();
+    mockEvidenceUseCases({
+      confirmEvidenceUpload: vi.fn().mockRejectedValue(
+        new ApplicationError("Evidence promotion state is ambiguous.", "EVIDENCE_PROMOTION_AMBIGUOUS", 503)
+      )
+    });
+
+    const response = await CONFIRM_EVIDENCE_UPLOAD(jsonRequest(
+      `http://localhost/api/v1/projects/${projectId}/evidence/uploads/${evidenceId}/confirm`,
+      { tenantId, type: "PHOTO", title: "Photo synthetique" }
+    ), confirmParams(projectId, evidenceId));
+
+    expect(response.status).toBe(503);
+  });
+
+  it("returns 201 and no-store on successful confirm", async () => {
+    mockActor();
+    mockEvidenceUseCases({
+      confirmEvidenceUpload: vi.fn().mockResolvedValue(evidenceDetails())
+    });
+
+    const response = await CONFIRM_EVIDENCE_UPLOAD(jsonRequest(
+      `http://localhost/api/v1/projects/${projectId}/evidence/uploads/${evidenceId}/confirm`,
+      { tenantId, type: "PHOTO", title: "Photo synthetique" }
+    ), confirmParams(projectId, evidenceId));
+    const body = await response.json() as { readonly data: EvidenceDetails; readonly request_id: string };
+
+    expect(response.status).toBe(201);
+    expect(body.data.id).toBe(evidenceId);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
 });
 
 function mockActor(): void {
@@ -729,6 +885,13 @@ function evidenceParams(
   currentEvidenceId: string
 ): { readonly params: Promise<{ readonly id: string; readonly evidenceId: string }> } {
   return { params: Promise.resolve({ id, evidenceId: currentEvidenceId }) };
+}
+
+function confirmParams(
+  id: string,
+  currentAssetId: string
+): { readonly params: Promise<{ readonly id: string; readonly assetId: string }> } {
+  return { params: Promise.resolve({ id, assetId: currentAssetId }) };
 }
 
 async function problem(response: Response): Promise<{
