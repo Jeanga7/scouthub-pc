@@ -4,6 +4,7 @@ import {
   assertSlice4Transition,
   buildInternalProjectSlug,
   buildProjectCode,
+  createProjectSubmittedForReviewEvent,
   isRoleAssignmentActive,
   isProjectContentEditable,
   isSlice3MutableProjectVisibility,
@@ -377,6 +378,18 @@ export class ProjectUseCases {
         requestId: input.requestId,
         auditAction: "project.submitted_for_review"
       });
+
+      // Same transaction as the status change: the event and the fact it
+      // describes commit together or not at all. If this append fails, the
+      // whole submission rolls back and the project stays in its old state.
+      await transaction.appendOutboxEvent(createProjectSubmittedForReviewEvent({
+        id: this.ids.generate(),
+        tenantId: input.tenantId,
+        projectId: input.projectId,
+        actorId: input.actor.account.id,
+        occurredAt: this.clock.now()
+      }));
+
       return { project, approvalRequest: request };
     });
   }

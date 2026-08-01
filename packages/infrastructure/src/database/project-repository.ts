@@ -3,6 +3,8 @@ import "pg-cloudflare";
 import pg from "pg";
 import type { QueryResultRow } from "pg";
 import type {
+  DomainEvent,
+  OutboxEventStatus,
   Person,
   Project,
   ProjectMode,
@@ -15,6 +17,7 @@ import type {
   AuditEventInput,
   ProjectCommentRecord,
   ProjectDetails,
+  OutboxRecord,
   ProjectInsert,
   ProjectListPage,
   ProjectOwnerOption,
@@ -34,6 +37,19 @@ interface Queryable {
     values?: readonly unknown[]
   ): Promise<{ readonly rows: TRow[]; readonly rowCount?: number | null }>;
 }
+
+type OutboxEventRow = QueryResultRow & {
+  id: string;
+  tenant_id: string;
+  aggregate_type: string;
+  aggregate_id: string;
+  event_type: string;
+  payload: OutboxRecord["payload"];
+  status: OutboxEventStatus;
+  attempts: string | number;
+  created_at: Date;
+  processed_at: Date | null;
+};
 
 type ProjectRow = QueryResultRow & {
   id: string;
@@ -740,6 +756,47 @@ class PgProjectTransaction implements ProjectTransaction {
       ]
     );
   }
+
+  async appendOutboxEvent(event: DomainEvent): Promise<OutboxRecord> {
+    // Uses this transaction's client, so the row is invisible until the
+    // surrounding COMMIT and disappears entirely on ROLLBACK.
+    const result = await this.db.query<OutboxEventRow>(
+      `INSERT INTO outbox_events (
+        id, tenant_id, aggregate_type, aggregate_id, event_type, payload, created_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING *`,
+      [
+        event.id,
+        event.tenantId,
+        event.aggregateType,
+        event.aggregateId,
+        event.eventType,
+        event.payload,
+        event.occurredAt
+      ]
+    );
+    const row = result.rows[0];
+    if (row === undefined) {
+      throw new Error("Expected inserted outbox event.");
+    }
+    return mapOutboxEvent(row);
+  }
+}
+
+function mapOutboxEvent(row: OutboxEventRow): OutboxRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    aggregateType: row.aggregate_type,
+    aggregateId: row.aggregate_id,
+    eventType: row.event_type,
+    payload: row.payload,
+    status: row.status,
+    attempts: Number(row.attempts),
+    createdAt: row.created_at,
+    processedAt: row.processed_at
+  };
 }
 
 function projectDetailsSelect(): string {
