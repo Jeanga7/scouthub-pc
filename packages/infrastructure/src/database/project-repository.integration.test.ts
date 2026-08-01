@@ -971,11 +971,15 @@ async function stageVerifiableUpload(options?: {
   return { useCases, storage, assetId: initiated.asset.id, tempKey };
 }
 
-function createEvidenceUseCases(storage: FakeObjectStorage, idValues: string[]): EvidenceUseCases {
+function createEvidenceUseCases(
+  storage: FakeObjectStorage,
+  idValues: string[],
+  fallbackPrefix?: string
+): EvidenceUseCases {
   return new EvidenceUseCases(
     createPgEvidenceRepository(databaseUrl),
     storage,
-    makeIdGenerator(idValues),
+    makeIdGenerator(idValues, fallbackPrefix),
     { now: () => now }
   );
 }
@@ -1032,6 +1036,44 @@ async function queryEvidenceRejectionAuditCount(assetId: string): Promise<number
       [assetId]
     );
     return Number(result.rows[0]?.count ?? 0);
+  } finally {
+    await pool.end();
+  }
+}
+
+async function queryApprovalRequestCount(projectId: string): Promise<number> {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  try {
+    const result = await pool.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM approval_request WHERE resource_id = $1",
+      [projectId]
+    );
+    return Number(result.rows[0]?.count ?? 0);
+  } finally {
+    await pool.end();
+  }
+}
+
+/** Puts an asset into VERIFYING without running a confirmation. */
+async function claimAssetForVerification(assetId: string): Promise<void> {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  try {
+    await pool.query(
+      "UPDATE media_asset SET upload_status = 'VERIFYING', updated_at = now() WHERE id = $1",
+      [assetId]
+    );
+  } finally {
+    await pool.end();
+  }
+}
+
+async function releaseVerificationClaim(assetId: string): Promise<void> {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  try {
+    await pool.query(
+      "UPDATE media_asset SET upload_status = 'PENDING_UPLOAD', updated_at = now() WHERE id = $1",
+      [assetId]
+    );
   } finally {
     await pool.end();
   }
@@ -1702,6 +1744,89 @@ describe("PgEvidenceRepository and EvidenceUseCases", () => {
     } finally {
       await pool.end();
     }
+  });
+
+  it("blocks submission while an Evidence upload is pending and releases it once finalized", async () => {
+    // The project is complete for review from the start: problemStatement,
+    // diagnostic and an ACTIVE project lead. Any submission failure below can
+    // therefore only come from the pending-evidence guard, never from readiness.
+    const projectUseCases = createUseCases([ids.project]);
+    const created = await projectUseCases.createProjectDraft({
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      ownerOrganizationId: ids.groupA,
+      title: "Jardin communautaire",
+      problemStatement: "Un probleme synthetique a traiter.",
+      diagnostic: "Un diagnostic synthetique verifie."
+    });
+    const submitInput = {
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      expectedVersion: created.project.version
+    };
+
+    const storage = new FakeObjectStorage();
+    // Distinct fallback namespace: this test drives the project and evidence
+    // use cases against the same audit_event table.
+    const evidenceUseCases = createEvidenceUseCases(storage, [ids.projectTwo], "eaeaeaea-eaea-4eae-8eae-");
+    const bytes = Uint8Array.from([0xff, 0xd8, 0xff, 0x00]);
+    const checksumHex = hashHex(bytes);
+    const initiated = await evidenceUseCases.initiateEvidenceUpload({
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      filename: "proof.jpg",
+      mime: "image/jpeg",
+      bytes: bytes.length,
+      sha256: checksumHex
+    });
+    const tempKey = initiated.asset.temporaryObjectKey;
+    if (tempKey === null) {
+      throw new Error("Expected temporary object key.");
+    }
+    expect((await queryMediaAsset(initiated.asset.id))?.upload_status).toBe("PENDING_UPLOAD");
+
+    // 1. PENDING_UPLOAD blocks submission.
+    await expect(projectUseCases.submitProjectForReview(submitInput)).rejects.toMatchObject({
+      code: "PROJECT_EVIDENCE_UPLOADS_PENDING",
+      status: 409
+    });
+    expect(await queryProjectStatus(ids.project)).toBe("DRAFT");
+    expect(await queryApprovalRequestCount(ids.project)).toBe(0);
+
+    // The same guard holds mid-verification, not only before the upload starts.
+    await claimAssetForVerification(initiated.asset.id);
+    expect((await queryMediaAsset(initiated.asset.id))?.upload_status).toBe("VERIFYING");
+    await expect(projectUseCases.submitProjectForReview(submitInput)).rejects.toMatchObject({
+      code: "PROJECT_EVIDENCE_UPLOADS_PENDING",
+      status: 409
+    });
+    expect(await queryProjectStatus(ids.project)).toBe("DRAFT");
+    expect(await queryApprovalRequestCount(ids.project)).toBe(0);
+    await releaseVerificationClaim(initiated.asset.id);
+
+    // 2. Finalizing the Evidence releases the guard.
+    storage.putObject(tempKey, {
+      contentType: "image/jpeg",
+      byteSize: bytes.length,
+      checksumSha256Base64: Buffer.from(checksumHex, "hex").toString("base64"),
+      etag: "\"temp-etag-submit-guard\"",
+      bytes
+    });
+    await evidenceUseCases.confirmEvidenceUpload(confirmInput(initiated.asset.id));
+    expect((await queryMediaAsset(initiated.asset.id))?.upload_status).toBe("VERIFIED");
+    expect(await queryEvidenceCount(initiated.asset.id)).toBe(1);
+
+    // This submit succeeds on the same project, same fields and same
+    // expectedVersion as the two that were refused above. Only the Evidence
+    // state changed, which is what proves the earlier refusals came from the
+    // pending-evidence guard and not from an incomplete readiness check: an
+    // unready project would fail here with PROJECT_NOT_READY_FOR_REVIEW.
+    const submitted = await projectUseCases.submitProjectForReview(submitInput);
+    expect(submitted.project.project.status).toBe("READY_FOR_REVIEW");
+    expect(await queryProjectStatus(ids.project)).toBe("READY_FOR_REVIEW");
+    expect(await queryApprovalRequestCount(ids.project)).toBe(1);
   });
 
   it("returns the same Evidence when the same confirmation is replayed", async () => {

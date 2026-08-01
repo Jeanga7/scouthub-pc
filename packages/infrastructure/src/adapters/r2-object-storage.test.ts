@@ -136,6 +136,39 @@ describe("R2 object storage adapter", () => {
     expect(message).not.toContain("tmp/evidence");
   });
 
+  it("maps an arrayBuffer rejection on a valid Response to storage unavailable", async () => {
+    // Not every failure surfaces as a ReadableStream error: a timeout or an
+    // aborted connection can reject arrayBuffer() on a Response that already
+    // passed the status checks.
+    const truncated = new Response(null, { status: 200 });
+    Object.defineProperty(truncated, "arrayBuffer", {
+      value: () => Promise.reject(new Error("terminated: aborted mid-body"))
+    });
+    const storage = createR2ObjectStorageAdapter({
+      accountId: "account",
+      bucketName: "bucket",
+      accessKeyId: "access",
+      secretAccessKey: "secret",
+      fetch: () => Promise.resolve(truncated)
+    });
+
+    const failure = await storage.readObjectForVerification({
+      key: "tmp/evidence/tenant/asset/random",
+      expectedEtag: "\"etag\"",
+      maxBytes: 64
+    }).then(() => null, (error: unknown) => error);
+
+    expect(failure).toMatchObject({
+      name: "ObjectStorageError",
+      code: "STORAGE_UNAVAILABLE"
+    });
+    // The transport error must not travel up: it carries no verdict on content.
+    const message = failure instanceof Error ? failure.message : "";
+    expect(message).not.toContain("terminated");
+    expect(message).not.toContain("secret");
+    expect(message).not.toContain("tmp/evidence");
+  });
+
   it("maps GET 412 and 500 to source changed or storage unavailable", async () => {
     const storage = createR2ObjectStorageAdapter({
       accountId: "account",
