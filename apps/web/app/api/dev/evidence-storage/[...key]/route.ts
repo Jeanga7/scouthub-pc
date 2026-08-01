@@ -3,6 +3,19 @@ import { getServerEnv } from "@/env/server";
 
 export const dynamic = "force-dynamic";
 
+// Local-only backing store for the presigned upload flow.
+//
+// This route is not a second implementation of the storage port: the port stays
+// the single seam (FakeObjectStorage under APP_ENV=test, LocalObjectStorage
+// under APP_ENV=local, the R2 adapter everywhere else). It exists because a
+// presigned PUT is performed by the browser, not by the server, so `local` needs
+// an HTTP target to receive that body — an in-process fake cannot. Automated
+// tests never reach this route; they drive FakeObjectStorage directly.
+//
+// Every verb is fail-closed on APP_ENV: outside `local` the route answers 404
+// and touches no storage, so it cannot be reached in preview, staging or
+// production even if it is accidentally deployed.
+
 export async function PUT(request: Request, context: { params: Promise<{ readonly key: string[] }> }) {
   if (!isLocalDev()) {
     return new Response(null, { status: 404 });
@@ -53,6 +66,11 @@ export async function GET(request: Request, context: { params: Promise<{ readonl
 }
 
 export async function HEAD(request: Request, context: { params: Promise<{ readonly key: string[] }> }) {
+  // Checked here as well as in GET: the guard must not depend on a delegation
+  // that a later refactor could remove.
+  if (!isLocalDev()) {
+    return new Response(null, { status: 404 });
+  }
   const response = await GET(request, context);
   return new Response(null, {
     status: response.status,

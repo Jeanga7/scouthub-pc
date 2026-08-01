@@ -496,6 +496,47 @@ describe("project route handlers", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
   });
 
+  it("propagates Evidence download denials without leaking a URL", async () => {
+    // Permission, tenant scope and asset state are decided in the use case; the
+    // route must surface the refusal as-is and never fall back to a URL.
+    const cases = [
+      { error: new ValidationError("Permission denied.", "EVIDENCE_DOWNLOAD_FORBIDDEN", 403), status: 403 },
+      { error: new NotFoundError("Evidence not found."), status: 404 }
+    ];
+
+    for (const { error, status } of cases) {
+      mockActor();
+      const createDownloadUrl = vi.fn().mockRejectedValue(error);
+      mockEvidenceUseCases({ createDownloadUrl });
+
+      const response = await CREATE_EVIDENCE_DOWNLOAD_URL(jsonRequest(
+        `http://localhost/api/v1/projects/${projectId}/evidence/${evidenceId}/download-url`,
+        { tenantId }
+      ), evidenceParams(projectId, evidenceId));
+      const body = await response.text();
+
+      expect(response.status).toBe(status);
+      expect(body).not.toContain("X-Amz");
+      expect(body).not.toContain("https://storage");
+      expect(response.headers.get("cache-control")).toBe("no-store");
+    }
+  });
+
+  it("returns 401 for anonymous Evidence download URL requests", async () => {
+    mockAnonymous();
+    const createDownloadUrl = vi.fn();
+    mockEvidenceUseCases({ createDownloadUrl });
+
+    const response = await CREATE_EVIDENCE_DOWNLOAD_URL(jsonRequest(
+      `http://localhost/api/v1/projects/${projectId}/evidence/${evidenceId}/download-url`,
+      { tenantId }
+    ), evidenceParams(projectId, evidenceId));
+
+    expect(response.status).toBe(401);
+    // Refused before the use case is reached, so nothing is ever signed.
+    expect(createDownloadUrl).not.toHaveBeenCalled();
+  });
+
   it("returns 401 for anonymous Evidence confirm", async () => {
     mockAnonymous();
     mockEvidenceUseCases({});

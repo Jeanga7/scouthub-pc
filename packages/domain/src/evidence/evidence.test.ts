@@ -10,11 +10,25 @@ import {
   assertEvidenceVisibility,
   assertSlice5EvidenceType,
   assertUploadableProjectStatus,
+  evidenceDownloadUrlTtlSeconds,
   evidenceMaxImageBytes,
-  evidenceMaxPdfBytes
+  evidenceMaxPdfBytes,
+  evidenceUploadUrlTtlSeconds
 } from "../index";
 
 describe("evidence domain invariants", () => {
+  it("keeps signed URL lifetimes short and never permanent", () => {
+    // Guards against a future edit quietly turning a private Evidence link into
+    // a durable one. Both stay positive and capped at fifteen minutes.
+    expect(evidenceDownloadUrlTtlSeconds).toBeGreaterThan(0);
+    expect(evidenceDownloadUrlTtlSeconds).toBeLessThanOrEqual(15 * 60);
+    expect(evidenceUploadUrlTtlSeconds).toBeGreaterThan(0);
+    expect(evidenceUploadUrlTtlSeconds).toBeLessThanOrEqual(15 * 60);
+    // A download link must not outlive the upload window it was derived from.
+    expect(evidenceDownloadUrlTtlSeconds).toBeLessThanOrEqual(evidenceUploadUrlTtlSeconds);
+  });
+
+
   it("allows only conservative Slice 5 MIME and extensions", () => {
     expect(assertEvidenceMime("image/jpeg")).toBe("image/jpeg");
     expect(assertEvidenceMime("image/png")).toBe("image/png");

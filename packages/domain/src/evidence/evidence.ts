@@ -39,7 +39,25 @@ export class EvidenceDomainError extends Error {
   }
 }
 
+/**
+ * Lifetime of a presigned Evidence upload URL.
+ *
+ * Long enough for a browser to PUT a file up to `evidenceMaxPdfBytes` on a slow
+ * connection, short enough that a leaked URL stops being usable quickly. The
+ * MediaAsset's `upload_expires_at` is derived from this value, so a confirmation
+ * arriving after the window is rejected as UPLOAD_EXPIRED.
+ */
 export const evidenceUploadUrlTtlSeconds = 5 * 60;
+
+/**
+ * Lifetime of a presigned Evidence download URL.
+ *
+ * Private Evidence is never served from a permanent or guessable URL: every
+ * download is authorized per request and handed a URL that dies in minutes.
+ * Keep this short — it is the window in which a URL copied out of a browser or
+ * a log would still resolve. It must never be raised to a value that makes a
+ * download link effectively permanent.
+ */
 export const evidenceDownloadUrlTtlSeconds = 2 * 60;
 export const evidenceMaxImageBytes = 12 * 1024 * 1024;
 export const evidenceMaxPdfBytes = 20 * 1024 * 1024;
