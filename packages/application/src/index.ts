@@ -3,6 +3,16 @@ export type {
   EnqueueOptions,
   QueueMessage
 } from "./ports/async-queue";
+export type { EventBus } from "./ports/event-bus";
+export { OutboxEventBus } from "./ports/event-bus";
+export type {
+  ClaimOutboxBatchInput,
+  OutboxRecord,
+  OutboxRepository,
+  OutboxTransaction,
+  SettleOutboxEventInput
+} from "./ports/outbox-repository";
+export { InMemoryOutboxRepository } from "./ports/in-memory-outbox-repository";
 export type {
   CreateIdentityInvitationInput,
   IdentityProvider,

@@ -1,10 +1,20 @@
 export type EntityId = string;
 
-export interface DomainEvent {
-  readonly id: EntityId;
-  readonly occurredAt: Date;
-  readonly type: string;
-}
+export type {
+  CreateDomainEventInput,
+  DomainEvent,
+  EventPayload,
+  JsonValue
+} from "./events/domain-event";
+export {
+  createDomainEvent,
+  normalizeAggregateType,
+  normalizeEventType,
+  serializeEventPayload
+} from "./events/domain-event";
+export { EventDomainError } from "./events/event-errors";
+export type { OutboxEventStatus } from "./events/outbox-event-status";
+export { canTransitionOutboxStatus, outboxEventStatuses } from "./events/outbox-event-status";
 
 export type { Organization, OrganizationMetadata } from "./organization/organization";
 export {

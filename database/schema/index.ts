@@ -16,28 +16,48 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
-export const outboxStatus = pgEnum("outbox_status", [
-  "pending",
-  "dispatched",
-  "failed"
+export const outboxEventStatus = pgEnum("outbox_event_status", [
+  "PENDING",
+  "PROCESSING",
+  "SENT",
+  "FAILED"
 ]);
 
-export const outboxEvent = pgTable(
-  "outbox_event",
+export const outboxEvents = pgTable(
+  "outbox_events",
   {
     id: uuid("id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    aggregateType: text("aggregate_type").notNull(),
+    aggregateId: uuid("aggregate_id").notNull(),
     eventType: text("event_type").notNull(),
     payload: jsonb("payload").notNull(),
-    status: outboxStatus("status").notNull().default("pending"),
+    status: outboxEventStatus("status").notNull().default("PENDING"),
+    attempts: integer("attempts").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
-    dispatchedAt: timestamp("dispatched_at", { withTimezone: true })
+    processedAt: timestamp("processed_at", { withTimezone: true })
   },
   (table) => [
-    index("outbox_event_status_created_at_idx").on(
-      table.status,
-      table.createdAt
+    index("outbox_events_tenant_idx").on(table.tenantId),
+    // Drives the dispatcher claim: oldest PENDING rows first.
+    index("outbox_events_status_created_at_idx").on(table.status, table.createdAt),
+    index("outbox_events_aggregate_idx").on(table.aggregateType, table.aggregateId),
+    check("outbox_events_attempts_non_negative", sql`${table.attempts} >= 0`),
+    check(
+      "outbox_events_aggregate_type_lowercase",
+      sql`${table.aggregateType} ~ '^[a-z][a-z0-9_]*$'`
+    ),
+    check(
+      "outbox_events_event_type_shape",
+      sql`${table.eventType} ~ '^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$'`
+    ),
+    // PENDING and PROCESSING have not been settled yet; SENT and FAILED have.
+    check(
+      "outbox_events_processed_at_shape",
+      sql`(${table.status} IN ('PENDING', 'PROCESSING') AND ${table.processedAt} IS NULL)
+          OR (${table.status} IN ('SENT', 'FAILED') AND ${table.processedAt} IS NOT NULL)`
     )
   ]
 );
