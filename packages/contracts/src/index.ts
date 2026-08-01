@@ -66,7 +66,10 @@ export const permissionCodeSchema = z.enum([
   "project.review",
   "project.request_changes",
   "project.approve",
-  "project.reject"
+  "project.reject",
+  "evidence.create",
+  "evidence.read",
+  "evidence.download"
 ]);
 
 const dateTimeOrNullSchema = z.iso.datetime().nullable().optional();
@@ -534,6 +537,88 @@ export const projectReviewHistoryResponseSchema = z.object({
   transitions: z.array(stateTransitionResponseSchema)
 });
 
+export const evidenceMimeSchema = z.enum(["image/jpeg", "image/png", "application/pdf"]);
+export const evidenceClassificationSchema = z.enum(["P1", "P2", "P3"]);
+export const evidenceTypeSchema = z.enum(["PHOTO", "DOCUMENT", "ATTESTATION", "EXTERNAL_CAPTURE"]);
+export const evidenceVisibilitySchema = z.enum(["PRIVATE", "INTERNAL"]);
+export const evidenceValidationStatusSchema = z.enum(["UNREVIEWED", "VALIDATED", "REJECTED"]);
+export const mediaScanStatusSchema = z.enum(["NOT_SCANNED"]);
+
+export const initiateEvidenceUploadRequestSchema = z.object({
+  tenantId: uuidSchema,
+  filename: z.string().min(1).max(255),
+  mime: evidenceMimeSchema,
+  bytes: z.number().int().positive(),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  classification: evidenceClassificationSchema.optional()
+}).strict();
+
+export const initiateEvidenceUploadResponseSchema = z.object({
+  assetId: uuidSchema,
+  upload: z.object({
+    url: z.url(),
+    method: z.literal("PUT"),
+    expiresAt: z.iso.datetime(),
+    requiredHeaders: z.record(z.string(), z.string())
+  })
+});
+
+export const confirmEvidenceUploadRequestSchema = z.object({
+  tenantId: uuidSchema,
+  type: evidenceTypeSchema,
+  title: z.string().min(1).max(160),
+  description: z.string().max(2000).nullable().optional(),
+  occurredAt: z.iso.datetime().nullable().optional(),
+  visibility: evidenceVisibilitySchema.optional()
+}).strict();
+
+export const listEvidenceQuerySchema = z.object({
+  tenantId: uuidSchema,
+  cursor: z.string().min(1).optional(),
+  limit: z.coerce.number().int().positive().max(50).optional()
+});
+
+export const evidenceResponseSchema = z.object({
+  id: uuidSchema,
+  projectId: uuidSchema,
+  type: evidenceTypeSchema,
+  title: z.string(),
+  description: z.string().nullable(),
+  occurredAt: z.iso.datetime().nullable(),
+  visibility: evidenceVisibilitySchema,
+  validationStatus: evidenceValidationStatusSchema,
+  classification: evidenceClassificationSchema,
+  media: z.object({
+    id: uuidSchema,
+    mime: evidenceMimeSchema,
+    bytes: z.number().int().positive(),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    scanStatus: mediaScanStatusSchema
+  }),
+  createdByAccountId: uuidSchema,
+  createdAt: z.iso.datetime(),
+  capabilities: z.object({
+    canDownload: z.boolean()
+  }).optional()
+});
+
+export const evidenceListResponseSchema = z.object({
+  items: z.array(evidenceResponseSchema),
+  nextCursor: z.string().nullable(),
+  capabilities: z.object({
+    canCreate: z.boolean()
+  })
+});
+
+export const createEvidenceDownloadUrlRequestSchema = z.object({
+  tenantId: uuidSchema
+}).strict();
+
+export const createEvidenceDownloadUrlResponseSchema = z.object({
+  url: z.url(),
+  expiresAt: z.iso.datetime()
+});
+
 export const problemDetailsSchema = z.object({
   type: z.string(),
   title: z.string(),
@@ -567,3 +652,10 @@ export type ApproveProjectRequest = z.infer<typeof approveProjectRequestSchema>;
 export type CreateProjectCommentRequest = z.infer<typeof createProjectCommentRequestSchema>;
 export type ReviewQueueResponse = z.infer<typeof reviewQueueResponseSchema>;
 export type ProjectReviewHistoryResponse = z.infer<typeof projectReviewHistoryResponseSchema>;
+export type InitiateEvidenceUploadRequest = z.infer<typeof initiateEvidenceUploadRequestSchema>;
+export type InitiateEvidenceUploadResponse = z.infer<typeof initiateEvidenceUploadResponseSchema>;
+export type ConfirmEvidenceUploadRequest = z.infer<typeof confirmEvidenceUploadRequestSchema>;
+export type EvidenceResponse = z.infer<typeof evidenceResponseSchema>;
+export type EvidenceListResponse = z.infer<typeof evidenceListResponseSchema>;
+export type CreateEvidenceDownloadUrlRequest = z.infer<typeof createEvidenceDownloadUrlRequestSchema>;
+export type CreateEvidenceDownloadUrlResponse = z.infer<typeof createEvidenceDownloadUrlResponseSchema>;

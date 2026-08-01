@@ -17,22 +17,40 @@ export const serverEnvSchema = z.object({
   CLERK_AUTHORIZED_PARTIES: z.string().optional(),
   NEXT_PUBLIC_CLERK_SIGN_IN_URL: z.string().default("/sign-in"),
   NEXT_PUBLIC_CLERK_SIGN_UP_URL: z.string().default("/sign-up"),
-  NEXT_PUBLIC_APP_NAME: z.string().min(1).default("ScoutHub-PC")
+  NEXT_PUBLIC_APP_NAME: z.string().min(1).default("ScoutHub-PC"),
+  R2_ACCOUNT_ID: z.string().optional(),
+  R2_BUCKET_NAME: z.string().optional(),
+  R2_ACCESS_KEY_ID: z.string().optional(),
+  R2_SECRET_ACCESS_KEY: z.string().optional()
 }).superRefine((env, context) => {
-  const clerkRequired = env.APP_ENV === "preview" || env.APP_ENV === "staging" || env.APP_ENV === "production";
-  if (clerkRequired && env.CLERK_SECRET_KEY.length === 0) {
+  const productionLike = env.APP_ENV === "preview" || env.APP_ENV === "staging" || env.APP_ENV === "production";
+  if (productionLike && env.CLERK_SECRET_KEY.length === 0) {
     context.addIssue({
       code: "custom",
       path: ["CLERK_SECRET_KEY"],
       message: "CLERK_SECRET_KEY is required outside local/test."
     });
   }
-  if (clerkRequired && env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY.length === 0) {
+  if (productionLike && env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY.length === 0) {
     context.addIssue({
       code: "custom",
       path: ["NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"],
       message: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is required outside local/test."
     });
+  }
+  for (const key of [
+    "R2_ACCOUNT_ID",
+    "R2_BUCKET_NAME",
+    "R2_ACCESS_KEY_ID",
+    "R2_SECRET_ACCESS_KEY"
+  ] as const) {
+    if (productionLike && (env[key] ?? "").trim().length === 0) {
+      context.addIssue({
+        code: "custom",
+        path: [key],
+        message: `${key} is required outside local/test for private Evidence storage.`
+      });
+    }
   }
 });
 

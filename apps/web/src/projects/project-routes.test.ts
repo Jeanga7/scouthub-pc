@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ActorContext, ProjectDetails, ProjectUseCases } from "@scouthub/application";
-import { ConflictError, NotFoundError, ValidationError } from "@scouthub/application";
-import type { ProjectResponse } from "@scouthub/contracts";
+import { z } from "zod";
+import type { ActorContext, EvidenceDetails, EvidenceUseCases, ProjectDetails, ProjectUseCases } from "@scouthub/application";
+import { ApplicationError, ConflictError, NotFoundError, ValidationError } from "@scouthub/application";
+import { evidenceResponseSchema, type ProjectResponse } from "@scouthub/contracts";
 
 vi.mock("@/identity/http", () => ({
   requireActor: vi.fn()
@@ -11,7 +12,12 @@ vi.mock("@/projects/service", () => ({
   createProjectUseCases: vi.fn()
 }));
 
+vi.mock("@/evidence/service", () => ({
+  createEvidenceUseCases: vi.fn()
+}));
+
 import { requireActor } from "@/identity/http";
+import { createEvidenceUseCases } from "@/evidence/service";
 import { createProjectUseCases } from "@/projects/service";
 import { GET, POST } from "../../app/api/v1/projects/route";
 import {
@@ -26,9 +32,14 @@ import { POST as REJECT_PROJECT } from "../../app/api/v1/projects/[id]/review/re
 import { POST as ADD_COMMENT } from "../../app/api/v1/projects/[id]/comments/route";
 import { GET as GET_REVIEW_HISTORY } from "../../app/api/v1/projects/[id]/reviews/route";
 import { GET as GET_REVIEWS } from "../../app/api/v1/reviews/route";
+import { POST as INITIATE_EVIDENCE_UPLOAD } from "../../app/api/v1/projects/[id]/evidence/upload-url/route";
+import { GET as LIST_EVIDENCE } from "../../app/api/v1/projects/[id]/evidence/route";
+import { POST as CREATE_EVIDENCE_DOWNLOAD_URL } from "../../app/api/v1/projects/[id]/evidence/[evidenceId]/download-url/route";
+import { POST as CONFIRM_EVIDENCE_UPLOAD } from "../../app/api/v1/projects/[id]/evidence/uploads/[assetId]/confirm/route";
 
 const tenantId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
 const projectId = "dddddddd-dddd-4ddd-8ddd-ddddddddddd1";
+const evidenceId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1";
 const ownerGroupId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3";
 const now = new Date("2026-07-25T12:00:00.000Z");
 
@@ -419,6 +430,270 @@ describe("project route handlers", () => {
     expect(body.title).toBe("PROJECT_REVIEW_CURSOR_INVALID");
     expect(response.headers.get("cache-control")).toBe("no-store");
   });
+
+  it("returns 401 for anonymous Evidence upload initiation", async () => {
+    mockAnonymous();
+    mockEvidenceUseCases({});
+
+    const response = await INITIATE_EVIDENCE_UPLOAD(jsonRequest(`http://localhost/api/v1/projects/${projectId}/evidence/upload-url`, {
+      tenantId,
+      filename: "photo.jpg",
+      mime: "image/jpeg",
+      bytes: 128,
+      sha256: "a".repeat(64)
+    }), params(projectId));
+
+    expect(response.status).toBe(401);
+  });
+
+  it("rejects forbidden Evidence upload MIME at HTTP boundary", async () => {
+    mockActor();
+    mockEvidenceUseCases({});
+
+    const response = await INITIATE_EVIDENCE_UPLOAD(jsonRequest(`http://localhost/api/v1/projects/${projectId}/evidence/upload-url`, {
+      tenantId,
+      filename: "evil.svg",
+      mime: "image/svg+xml",
+      bytes: 128,
+      sha256: "a".repeat(64)
+    }), params(projectId));
+
+    expect(response.status).toBe(400);
+    expect((await problem(response)).request_id).toHaveLength(36);
+  });
+
+  it("rejects invalid Evidence cursor before repository access", async () => {
+    mockActor();
+    mockEvidenceUseCases({});
+
+    const response = await LIST_EVIDENCE(
+      new Request(`http://localhost/api/v1/projects/${projectId}/evidence?tenantId=${tenantId}&cursor=not-a-cursor`),
+      params(projectId)
+    );
+
+    expect(response.status).toBe(400);
+    expect((await problem(response)).title).toBe("EVIDENCE_CURSOR_INVALID");
+  });
+
+  it("issues Evidence download URLs with no-store response", async () => {
+    mockActor();
+    mockEvidenceUseCases({
+      createDownloadUrl: vi.fn().mockResolvedValue({
+        url: "https://storage.test/download?X-Amz-Expires=120",
+        expiresAt: now
+      })
+    });
+
+    const response = await CREATE_EVIDENCE_DOWNLOAD_URL(jsonRequest(
+      `http://localhost/api/v1/projects/${projectId}/evidence/${evidenceId}/download-url`,
+      { tenantId }
+    ), evidenceParams(projectId, evidenceId));
+    const body = await response.json() as { readonly data: { readonly url: string }; readonly request_id: string };
+
+    expect(response.status).toBe(200);
+    expect(body.data.url).toContain("X-Amz-Expires=120");
+    expect(body.request_id).toHaveLength(36);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("propagates Evidence download denials without leaking a URL", async () => {
+    // Permission, tenant scope and asset state are decided in the use case; the
+    // route must surface the refusal as-is and never fall back to a URL.
+    const cases = [
+      { error: new ValidationError("Permission denied.", "EVIDENCE_DOWNLOAD_FORBIDDEN", 403), status: 403 },
+      { error: new NotFoundError("Evidence not found."), status: 404 }
+    ];
+
+    for (const { error, status } of cases) {
+      mockActor();
+      const createDownloadUrl = vi.fn().mockRejectedValue(error);
+      mockEvidenceUseCases({ createDownloadUrl });
+
+      const response = await CREATE_EVIDENCE_DOWNLOAD_URL(jsonRequest(
+        `http://localhost/api/v1/projects/${projectId}/evidence/${evidenceId}/download-url`,
+        { tenantId }
+      ), evidenceParams(projectId, evidenceId));
+      const body = await response.text();
+
+      expect(response.status).toBe(status);
+      expect(body).not.toContain("X-Amz");
+      expect(body).not.toContain("https://storage");
+      expect(response.headers.get("cache-control")).toBe("no-store");
+    }
+  });
+
+  it("returns 401 for anonymous Evidence download URL requests", async () => {
+    mockAnonymous();
+    const createDownloadUrl = vi.fn();
+    mockEvidenceUseCases({ createDownloadUrl });
+
+    const response = await CREATE_EVIDENCE_DOWNLOAD_URL(jsonRequest(
+      `http://localhost/api/v1/projects/${projectId}/evidence/${evidenceId}/download-url`,
+      { tenantId }
+    ), evidenceParams(projectId, evidenceId));
+
+    expect(response.status).toBe(401);
+    // Refused before the use case is reached, so nothing is ever signed.
+    expect(createDownloadUrl).not.toHaveBeenCalled();
+  });
+
+  it("returns 401 for anonymous Evidence confirm", async () => {
+    mockAnonymous();
+    mockEvidenceUseCases({});
+
+    const response = await CONFIRM_EVIDENCE_UPLOAD(jsonRequest(
+      `http://localhost/api/v1/projects/${projectId}/evidence/uploads/${evidenceId}/confirm`,
+      { tenantId, type: "PHOTO", title: "Photo synthetique" }
+    ), confirmParams(projectId, evidenceId));
+
+    expect(response.status).toBe(401);
+  });
+
+  it("rejects invalid Evidence confirm payload before use case access", async () => {
+    mockActor();
+    mockEvidenceUseCases({});
+
+    const response = await CONFIRM_EVIDENCE_UPLOAD(jsonRequest(
+      `http://localhost/api/v1/projects/${projectId}/evidence/uploads/${evidenceId}/confirm`,
+      { tenantId, title: "Photo synthetique" }
+    ), confirmParams(projectId, evidenceId));
+
+    expect(response.status).toBe(400);
+    expect((await problem(response)).request_id).toHaveLength(36);
+  });
+
+  it("maps cross-scope confirm denial to 403", async () => {
+    mockActor();
+    mockEvidenceUseCases({
+      confirmEvidenceUpload: vi.fn().mockRejectedValue(
+        new ValidationError("Permission denied.", "NO_MATCHING_ACTIVE_ASSIGNMENT", 403)
+      )
+    });
+
+    const response = await CONFIRM_EVIDENCE_UPLOAD(jsonRequest(
+      `http://localhost/api/v1/projects/${projectId}/evidence/uploads/${evidenceId}/confirm`,
+      { tenantId, type: "PHOTO", title: "Photo synthetique" }
+    ), confirmParams(projectId, evidenceId));
+
+    expect(response.status).toBe(403);
+  });
+
+  it("maps expired confirm to 422", async () => {
+    mockActor();
+    mockEvidenceUseCases({
+      confirmEvidenceUpload: vi.fn().mockRejectedValue(
+        new ValidationError("Evidence upload expired.", "UPLOAD_EXPIRED", 422)
+      )
+    });
+
+    const response = await CONFIRM_EVIDENCE_UPLOAD(jsonRequest(
+      `http://localhost/api/v1/projects/${projectId}/evidence/uploads/${evidenceId}/confirm`,
+      { tenantId, type: "PHOTO", title: "Photo synthetique" }
+    ), confirmParams(projectId, evidenceId));
+
+    expect(response.status).toBe(422);
+  });
+
+  it("maps rejected confirm to 409", async () => {
+    mockActor();
+    mockEvidenceUseCases({
+      confirmEvidenceUpload: vi.fn().mockRejectedValue(
+        new ConflictError("Evidence upload has already been rejected.")
+      )
+    });
+
+    const response = await CONFIRM_EVIDENCE_UPLOAD(jsonRequest(
+      `http://localhost/api/v1/projects/${projectId}/evidence/uploads/${evidenceId}/confirm`,
+      { tenantId, type: "PHOTO", title: "Photo synthetique" }
+    ), confirmParams(projectId, evidenceId));
+
+    expect(response.status).toBe(409);
+  });
+
+  it("maps verified confirm with different metadata to 409", async () => {
+    mockActor();
+    mockEvidenceUseCases({
+      confirmEvidenceUpload: vi.fn().mockRejectedValue(
+        new ConflictError("Evidence upload was already confirmed with different metadata.")
+      )
+    });
+
+    const response = await CONFIRM_EVIDENCE_UPLOAD(jsonRequest(
+      `http://localhost/api/v1/projects/${projectId}/evidence/uploads/${evidenceId}/confirm`,
+      { tenantId, type: "PHOTO", title: "Photo synthetique diff" }
+    ), confirmParams(projectId, evidenceId));
+
+    expect(response.status).toBe(409);
+  });
+
+  it("maps verifying confirm to 409", async () => {
+    mockActor();
+    mockEvidenceUseCases({
+      confirmEvidenceUpload: vi.fn().mockRejectedValue(
+        new ValidationError("Evidence verification is already in progress.", "EVIDENCE_VERIFICATION_IN_PROGRESS", 409)
+      )
+    });
+
+    const response = await CONFIRM_EVIDENCE_UPLOAD(jsonRequest(
+      `http://localhost/api/v1/projects/${projectId}/evidence/uploads/${evidenceId}/confirm`,
+      { tenantId, type: "PHOTO", title: "Photo synthetique" }
+    ), confirmParams(projectId, evidenceId));
+
+    expect(response.status).toBe(409);
+  });
+
+  it("returns 503 when confirm storage is unavailable", async () => {
+    mockActor();
+    mockEvidenceUseCases({
+      confirmEvidenceUpload: vi.fn().mockRejectedValue(
+        new ApplicationError("Evidence storage unavailable.", "EVIDENCE_STORAGE_UNAVAILABLE", 503)
+      )
+    });
+
+    const response = await CONFIRM_EVIDENCE_UPLOAD(jsonRequest(
+      `http://localhost/api/v1/projects/${projectId}/evidence/uploads/${evidenceId}/confirm`,
+      { tenantId, type: "PHOTO", title: "Photo synthetique" }
+    ), confirmParams(projectId, evidenceId));
+
+    expect(response.status).toBe(503);
+  });
+
+  it("returns 503 when confirm promotion is ambiguous", async () => {
+    mockActor();
+    mockEvidenceUseCases({
+      confirmEvidenceUpload: vi.fn().mockRejectedValue(
+        new ApplicationError("Evidence promotion state is ambiguous.", "EVIDENCE_PROMOTION_AMBIGUOUS", 503)
+      )
+    });
+
+    const response = await CONFIRM_EVIDENCE_UPLOAD(jsonRequest(
+      `http://localhost/api/v1/projects/${projectId}/evidence/uploads/${evidenceId}/confirm`,
+      { tenantId, type: "PHOTO", title: "Photo synthetique" }
+    ), confirmParams(projectId, evidenceId));
+
+    expect(response.status).toBe(503);
+  });
+
+  it("returns 201 and no-store on successful confirm", async () => {
+    mockActor();
+    mockEvidenceUseCases({
+      confirmEvidenceUpload: vi.fn().mockResolvedValue(evidenceDetails())
+    });
+
+    const response = await CONFIRM_EVIDENCE_UPLOAD(jsonRequest(
+      `http://localhost/api/v1/projects/${projectId}/evidence/uploads/${evidenceId}/confirm`,
+      { tenantId, type: "PHOTO", title: "Photo synthetique" }
+    ), confirmParams(projectId, evidenceId));
+    const body = z.object({
+      data: evidenceResponseSchema,
+      request_id: z.string()
+    }).parse(await response.json());
+
+    expect(response.status).toBe(201);
+    expect(body.data.id).toBe(evidenceId);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
 });
 
 function mockActor(): void {
@@ -467,6 +742,33 @@ function mockUseCases(overrides: Partial<ProjectUseCases>): void {
     }),
     ...overrides
   } as ProjectUseCases);
+}
+
+function mockEvidenceUseCases(overrides: Partial<EvidenceUseCases>): void {
+  vi.mocked(createEvidenceUseCases).mockReturnValue({
+    initiateEvidenceUpload: vi.fn().mockResolvedValue({
+      asset: evidenceDetails().media,
+      upload: {
+        url: "https://storage.test/upload?X-Amz-Expires=300",
+        method: "PUT",
+        expiresAt: now,
+        requiredHeaders: {
+          "Content-Type": "image/jpeg"
+        }
+      }
+    }),
+    confirmEvidenceUpload: vi.fn().mockResolvedValue(evidenceDetails()),
+    listEvidence: vi.fn().mockResolvedValue({
+      items: [evidenceDetails()],
+      nextCursor: null,
+      capabilities: { canCreate: true }
+    }),
+    createDownloadUrl: vi.fn().mockResolvedValue({
+      url: "https://storage.test/download?X-Amz-Expires=120",
+      expiresAt: now
+    }),
+    ...overrides
+  } as EvidenceUseCases);
 }
 
 function actor(): ActorContext {
@@ -530,6 +832,59 @@ function projectDetails(overrides: Partial<ProjectDetails["project"]> = {}): Pro
   };
 }
 
+function evidenceDetails(): EvidenceDetails {
+  return {
+    evidence: {
+      id: evidenceId,
+      tenantId,
+      projectId,
+      mediaAssetId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2",
+      type: "PHOTO",
+      title: "Photo synthetique",
+      description: null,
+      occurredAt: null,
+      visibility: "PRIVATE",
+      validationStatus: "UNREVIEWED",
+      createdByAccountId: "cccccccc-cccc-4ccc-8ccc-ccccccccccc1",
+      createdAt: now,
+      updatedAt: now
+    },
+    media: {
+      id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2",
+      tenantId,
+      projectId,
+      temporaryObjectKey: null,
+      objectKey: "evidence/tenant/asset/random",
+      mime: "image/jpeg",
+      byteSize: 128,
+      sha256: "a".repeat(64),
+      etag: "\"etag\"",
+      classification: "P3",
+      uploadStatus: "VERIFIED",
+      scanStatus: "NOT_SCANNED",
+      uploadedByAccountId: "cccccccc-cccc-4ccc-8ccc-ccccccccccc1",
+      uploadExpiresAt: now,
+      verifiedAt: now,
+      rejectedAt: null,
+      rejectionCode: null,
+      width: null,
+      height: null,
+      createdAt: now,
+      updatedAt: now
+    },
+    project: {
+      projectId,
+      tenantId,
+      status: "DRAFT",
+      createdByAccountId: "cccccccc-cccc-4ccc-8ccc-ccccccccccc1",
+      ownerOrganizationId: ownerGroupId,
+      ownerOrganizationPath: `/${tenantId}/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2/${ownerGroupId}/`,
+      ownerOrganizationType: "GROUP",
+      ownerOrganizationStatus: "ACTIVE"
+    }
+  };
+}
+
 const reviewRequestId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2";
 
 function approvalRequest() {
@@ -568,6 +923,20 @@ function jsonRequest(url: string, payload: unknown): Request {
 
 function params(id: string): { readonly params: Promise<{ readonly id: string }> } {
   return { params: Promise.resolve({ id }) };
+}
+
+function evidenceParams(
+  id: string,
+  currentEvidenceId: string
+): { readonly params: Promise<{ readonly id: string; readonly evidenceId: string }> } {
+  return { params: Promise.resolve({ id, evidenceId: currentEvidenceId }) };
+}
+
+function confirmParams(
+  id: string,
+  currentAssetId: string
+): { readonly params: Promise<{ readonly id: string; readonly assetId: string }> } {
+  return { params: Promise.resolve({ id, assetId: currentAssetId }) };
 }
 
 async function problem(response: Response): Promise<{

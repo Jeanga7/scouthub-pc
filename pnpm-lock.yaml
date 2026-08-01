@@ -150,6 +150,9 @@ importers:
       '@scouthub/domain':
         specifier: workspace:*
         version: link:../domain
+      aws4fetch:
+        specifier: ^1.0.20
+        version: 1.0.20
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(pg@8.22.0)

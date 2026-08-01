@@ -33,7 +33,10 @@ export type PermissionCode =
   | "project.review"
   | "project.request_changes"
   | "project.approve"
-  | "project.reject";
+  | "project.reject"
+  | "evidence.create"
+  | "evidence.read"
+  | "evidence.download";
 
 export type RoleScopeType =
   | "OWN"

@@ -1,9 +1,13 @@
+import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import pg from "pg";
 import type { Pool } from "pg";
-import type { ActorContext } from "@scouthub/application";
-import { ProjectUseCases, type IdGenerator } from "@scouthub/application";
+import type { ActorContext, EvidenceRepository, EvidenceTransaction } from "@scouthub/application";
+import { EvidenceUseCases, ProjectUseCases, type IdGenerator } from "@scouthub/application";
+import { FakeObjectStorage } from "@scouthub/application";
+import { evidenceDownloadUrlTtlSeconds } from "@scouthub/domain";
 import { createPgProjectRepository } from "./project-repository";
+import { createPgEvidenceRepository } from "./evidence-repository";
 
 const databaseUrl =
   process.env.DATABASE_URL ??
@@ -34,7 +38,7 @@ describe("PgProjectRepository", () => {
   beforeEach(async () => {
     const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
     try {
-      await pool.query("TRUNCATE audit_event, approval_decision, state_transition, project_comment, approval_request, project, role_assignment, account_invitation, account_person_link, account, person, organization RESTART IDENTITY CASCADE");
+      await pool.query("TRUNCATE audit_event, evidence, media_asset, approval_decision, state_transition, project_comment, approval_request, project, role_assignment, account_invitation, account_person_link, account, person, organization RESTART IDENTITY CASCADE");
       await seedBase(pool);
     } finally {
       await pool.end();
@@ -754,6 +758,92 @@ describe("PgProjectRepository", () => {
     });
     expect(pendingOnly.items.map((item) => item.projectId)).toEqual([regionASecondProject]);
   });
+
+  it("enforces Evidence media/project coherence and verified object immutability", async () => {
+    const useCases = createUseCases([ids.project, ids.projectTwo]);
+    await useCases.createProjectDraft({
+      actor: groupAdminActor(),
+      tenantId: ids.tenant,
+      ownerOrganizationId: ids.groupA,
+      title: "Jardin communautaire"
+    });
+    await useCases.createProjectDraft({
+      actor: groupBAdminActor(),
+      tenantId: ids.tenant,
+      ownerOrganizationId: ids.groupB,
+      title: "Nettoyage plage"
+    });
+
+    const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+    try {
+      const assetId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1";
+      await pool.query(
+        `INSERT INTO media_asset (
+          id, tenant_id, project_id, temporary_object_key, object_key, mime,
+          byte_size, sha256, etag, classification, upload_status, scan_status,
+          uploaded_by_account_id, upload_expires_at, verified_at
+        )
+        VALUES (
+          $1, $2, $3, $4, $5, 'image/jpeg',
+          3, $6, 'etag-1', 'P3', 'VERIFIED', 'NOT_SCANNED',
+          $7, $8, $8
+        )`,
+        [
+          assetId,
+          ids.tenant,
+          ids.project,
+          `tmp/evidence/${ids.tenant}/${assetId}/nonce`,
+          `evidence/${ids.tenant}/${assetId}/nonce`,
+          "a".repeat(64),
+          ids.account,
+          now
+        ]
+      );
+
+      await pool.query(
+        `INSERT INTO evidence (
+          id, tenant_id, project_id, media_asset_id, type, title,
+          visibility, validation_status, created_by_account_id
+        )
+        VALUES (
+          'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2', $1, $2, $3,
+          'PHOTO', 'Photo synthetique', 'PRIVATE', 'UNREVIEWED', $4
+        )`,
+        [ids.tenant, ids.project, assetId, ids.account]
+      );
+
+      await expect(pool.query(
+        `INSERT INTO evidence (
+          id, tenant_id, project_id, media_asset_id, type, title,
+          visibility, validation_status, created_by_account_id
+        )
+        VALUES (
+          'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee3', $1, $2, $3,
+          'PHOTO', 'Duplicate', 'PRIVATE', 'UNREVIEWED', $4
+        )`,
+        [ids.tenant, ids.project, assetId, ids.account]
+      )).rejects.toThrow();
+
+      await expect(pool.query(
+        `INSERT INTO evidence (
+          id, tenant_id, project_id, media_asset_id, type, title,
+          visibility, validation_status, created_by_account_id
+        )
+        VALUES (
+          'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee4', $1, $2, $3,
+          'PHOTO', 'Wrong project', 'PRIVATE', 'UNREVIEWED', $4
+        )`,
+        [ids.tenant, ids.projectTwo, assetId, ids.account]
+      )).rejects.toThrow();
+
+      await expect(pool.query(
+        "UPDATE media_asset SET object_key = 'evidence/changed' WHERE id = $1",
+        [assetId]
+      )).rejects.toThrow("immutable");
+    } finally {
+      await pool.end();
+    }
+  });
 });
 
 async function seedBase(pool: Pool): Promise<void> {
@@ -813,8 +903,93 @@ async function seedBase(pool: Pool): Promise<void> {
 }
 
 function createUseCases(idValues: string[]): ProjectUseCases {
+  return new ProjectUseCases(
+    createPgProjectRepository(databaseUrl),
+    makeIdGenerator(idValues),
+    { now: () => now }
+  );
+}
+
+function confirmInput(assetId: string) {
+  return {
+    actor: evidenceOwnerActor(),
+    tenantId: ids.tenant,
+    projectId: ids.project,
+    assetId,
+    type: "PHOTO" as const,
+    title: "Photo synthetique"
+  };
+}
+
+/**
+ * Creates the project, initiates an upload and puts a matching object in the
+ * fake storage, leaving the asset PENDING_UPLOAD and ready to confirm.
+ *
+ * `bytes` overrides the stored payload while keeping the checksum consistent,
+ * so a test can isolate the magic-byte check from the checksum check.
+ */
+async function stageVerifiableUpload(options?: {
+  readonly bytes?: Uint8Array;
+}): Promise<{
+  readonly useCases: EvidenceUseCases;
+  readonly storage: FakeObjectStorage;
+  readonly assetId: string;
+  readonly tempKey: string;
+}> {
+  const projectUseCases = createUseCases([ids.project]);
+  await projectUseCases.createProjectDraft({
+    actor: evidenceOwnerActor(),
+    tenantId: ids.tenant,
+    ownerOrganizationId: ids.groupA,
+    title: "Jardin communautaire"
+  });
+
+  const storage = new FakeObjectStorage();
+  const useCases = createEvidenceUseCases(storage, [ids.projectTwo]);
+  const bytes = options?.bytes ?? Uint8Array.from([0xff, 0xd8, 0xff, 0x00]);
+  const checksumHex = hashHex(bytes);
+  const initiated = await useCases.initiateEvidenceUpload({
+    actor: evidenceOwnerActor(),
+    tenantId: ids.tenant,
+    projectId: ids.project,
+    filename: "proof.jpg",
+    mime: "image/jpeg",
+    bytes: bytes.length,
+    sha256: checksumHex
+  });
+  const tempKey = initiated.asset.temporaryObjectKey;
+  if (tempKey === null) {
+    throw new Error("Expected temporary object key.");
+  }
+  storage.putObject(tempKey, {
+    contentType: "image/jpeg",
+    byteSize: bytes.length,
+    checksumSha256Base64: Buffer.from(checksumHex, "hex").toString("base64"),
+    etag: "\"temp-etag-staged\"",
+    bytes
+  });
+  return { useCases, storage, assetId: initiated.asset.id, tempKey };
+}
+
+function createEvidenceUseCases(
+  storage: FakeObjectStorage,
+  idValues: string[],
+  fallbackPrefix?: string
+): EvidenceUseCases {
+  return new EvidenceUseCases(
+    createPgEvidenceRepository(databaseUrl),
+    storage,
+    makeIdGenerator(idValues, fallbackPrefix),
+    { now: () => now }
+  );
+}
+
+// `fallbackPrefix` keeps generated ids unique across the generators used within
+// a single test: without it two generators would emit the same fallback uuids
+// and collide on audit_event's primary key.
+function makeIdGenerator(idValues: string[], fallbackPrefix = "eeeeeeee-eeee-4eee-8eee-"): IdGenerator {
   let auditCounter = 1;
-  const generator: IdGenerator = {
+  return {
     generate() {
       const next = idValues.shift();
       if (next !== undefined) {
@@ -822,14 +997,111 @@ function createUseCases(idValues: string[]): ProjectUseCases {
       }
       const suffix = String(auditCounter).padStart(12, "0");
       auditCounter += 1;
-      return `eeeeeeee-eeee-4eee-8eee-${suffix}`;
+      return `${fallbackPrefix}${suffix}`;
     }
   };
-  return new ProjectUseCases(
-    createPgProjectRepository(databaseUrl),
-    generator,
-    { now: () => now }
-  );
+}
+
+async function queryMediaAsset(assetId: string): Promise<{ upload_status: string; object_key: string | null; verified_at: Date | null; rejection_code: string | null } | null> {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  try {
+    const result = await pool.query<{ upload_status: string; object_key: string | null; verified_at: Date | null; rejection_code: string | null }>(
+      "SELECT upload_status, object_key, verified_at, rejection_code FROM media_asset WHERE id = $1",
+      [assetId]
+    );
+    return result.rows[0] ?? null;
+  } finally {
+    await pool.end();
+  }
+}
+
+async function queryEvidenceCount(assetId: string): Promise<number> {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  try {
+    const result = await pool.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM evidence WHERE media_asset_id = $1",
+      [assetId]
+    );
+    return Number(result.rows[0]?.count ?? 0);
+  } finally {
+    await pool.end();
+  }
+}
+
+async function queryEvidenceRejectionAuditCount(assetId: string): Promise<number> {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  try {
+    const result = await pool.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM audit_event WHERE resource_id = $1 AND action = 'evidence.upload_rejected'",
+      [assetId]
+    );
+    return Number(result.rows[0]?.count ?? 0);
+  } finally {
+    await pool.end();
+  }
+}
+
+async function queryApprovalRequestCount(projectId: string): Promise<number> {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  try {
+    const result = await pool.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM approval_request WHERE resource_id = $1",
+      [projectId]
+    );
+    return Number(result.rows[0]?.count ?? 0);
+  } finally {
+    await pool.end();
+  }
+}
+
+/** Puts an asset into VERIFYING without running a confirmation. */
+async function claimAssetForVerification(assetId: string): Promise<void> {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  try {
+    await pool.query(
+      "UPDATE media_asset SET upload_status = 'VERIFYING', updated_at = now() WHERE id = $1",
+      [assetId]
+    );
+  } finally {
+    await pool.end();
+  }
+}
+
+async function releaseVerificationClaim(assetId: string): Promise<void> {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  try {
+    await pool.query(
+      "UPDATE media_asset SET upload_status = 'PENDING_UPLOAD', updated_at = now() WHERE id = $1",
+      [assetId]
+    );
+  } finally {
+    await pool.end();
+  }
+}
+
+async function queryProjectStatus(projectId: string): Promise<string | null> {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  try {
+    const result = await pool.query<{ status: string }>(
+      "SELECT status FROM project WHERE id = $1",
+      [projectId]
+    );
+    return result.rows[0]?.status ?? null;
+  } finally {
+    await pool.end();
+  }
+}
+
+function hashHex(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function permanentEvidenceKey(tenantId: string, assetId: string, temporaryObjectKey: string): string {
+  const nonce = temporaryObjectKey.split("/").at(-1);
+  if (nonce === undefined || nonce.length === 0) {
+    throw new Error("Expected temporary object nonce.");
+  }
+  return `evidence/${tenantId}/${assetId}/${nonce}`;
 }
 
 function groupAdminActor(): ActorContext {
@@ -851,6 +1123,903 @@ function projectOwnerActor(): ActorContext {
     scopeType: "GROUP"
   });
 }
+
+function evidenceOwnerActor(): ActorContext {
+  return actor({
+    roleCode: "GROUP_ADMIN",
+    permissions: [
+      "project.create",
+      "project.read",
+      "project.update",
+      "project.submit",
+      "project.comment",
+      "evidence.create",
+      "evidence.read",
+      "evidence.download"
+    ],
+    scopeOrgId: ids.groupA,
+    scopePath: `/${ids.tenant}/${ids.region}/${ids.groupA}/`,
+    scopeType: "GROUP"
+  });
+}
+
+/** Can read Evidence metadata but must never be handed a download URL. */
+function evidenceReaderActor(): ActorContext {
+  return actor({
+    roleCode: "GROUP_ADMIN",
+    permissions: ["project.read", "evidence.create", "evidence.read"],
+    scopeOrgId: ids.groupA,
+    scopePath: `/${ids.tenant}/${ids.region}/${ids.groupA}/`,
+    scopeType: "GROUP"
+  });
+}
+
+/** Full Evidence permissions, but scoped to a different tenant. */
+function foreignTenantEvidenceActor(): ActorContext {
+  return actor({
+    roleCode: "GROUP_ADMIN",
+    permissions: ["project.read", "evidence.create", "evidence.read", "evidence.download"],
+    scopeOrgId: ids.groupTenantB,
+    scopePath: `/${ids.tenantB}/${ids.regionB}/${ids.groupTenantB}/`,
+    scopeType: "GROUP",
+    tenantId: ids.tenantB
+  });
+}
+
+describe("PgEvidenceRepository and EvidenceUseCases", () => {
+  beforeEach(async () => {
+    const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+    try {
+      await pool.query("TRUNCATE audit_event, evidence, media_asset, approval_decision, state_transition, project_comment, approval_request, project, role_assignment, account_invitation, account_person_link, account, person, organization RESTART IDENTITY CASCADE");
+      await seedBase(pool);
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it("persists expired rejection and audit before returning 422", async () => {
+    const projectUseCases = createUseCases([ids.project]);
+    await projectUseCases.createProjectDraft({
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      ownerOrganizationId: ids.groupA,
+      title: "Jardin communautaire"
+    });
+
+    const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+    const storage = new FakeObjectStorage();
+    const useCases = createEvidenceUseCases(storage, [ids.projectTwo]);
+    const assetId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee5";
+    const temporaryObjectKey = `tmp/evidence/${ids.tenant}/${assetId}/nonce`;
+    try {
+      await pool.query(
+        `INSERT INTO media_asset (
+          id, tenant_id, project_id, temporary_object_key, mime, byte_size,
+          sha256, classification, uploaded_by_account_id, upload_expires_at
+        )
+        VALUES ($1, $2, $3, $4, 'image/jpeg', 4, $5, 'P3', $6, $7)`,
+        [
+          assetId,
+          ids.tenant,
+          ids.project,
+          temporaryObjectKey,
+          "a".repeat(64),
+          ids.account,
+          new Date("2026-07-24T12:00:00.000Z")
+        ]
+      );
+
+      await expect(useCases.confirmEvidenceUpload({
+        actor: evidenceOwnerActor(),
+        tenantId: ids.tenant,
+        projectId: ids.project,
+        assetId,
+        type: "PHOTO",
+        title: "Photo synthetique"
+      })).rejects.toMatchObject({
+        code: "UPLOAD_EXPIRED",
+        status: 422
+      });
+
+      const asset = await pool.query<{ upload_status: string; rejection_code: string | null }>(
+        "SELECT upload_status, rejection_code FROM media_asset WHERE id = $1",
+        [assetId]
+      );
+      expect(asset.rows[0]).toEqual({
+        upload_status: "REJECTED",
+        rejection_code: "UPLOAD_EXPIRED"
+      });
+
+      const audits = await pool.query<{ action: string }>(
+        "SELECT action FROM audit_event WHERE resource_id = $1 ORDER BY occurred_at",
+        [assetId]
+      );
+      expect(audits.rows.map((row) => row.action)).toEqual(["evidence.upload_rejected"]);
+
+      await expect(useCases.confirmEvidenceUpload({
+        actor: evidenceOwnerActor(),
+        tenantId: ids.tenant,
+        projectId: ids.project,
+        assetId,
+        type: "PHOTO",
+        title: "Photo synthetique"
+      })).rejects.toMatchObject({
+        status: 409
+      });
+
+      const auditAfter = await pool.query("SELECT count(*)::int AS count FROM audit_event WHERE resource_id = $1", [assetId]);
+      expect(auditAfter.rows[0]?.count).toBe(1);
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it("keeps VERIFYING when permanent head signing fails after CopyObject", async () => {
+    const projectUseCases = createUseCases([ids.project]);
+    await projectUseCases.createProjectDraft({
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      ownerOrganizationId: ids.groupA,
+      title: "Jardin communautaire"
+    });
+
+    const storage = new FakeObjectStorage();
+    const useCases = createEvidenceUseCases(storage, [ids.projectTwo]);
+    const bytes = Uint8Array.from([0xff, 0xd8, 0xff, 0x00]);
+    const checksumHex = hashHex(bytes);
+    const checksumBase64 = Buffer.from(checksumHex, "hex").toString("base64");
+    const initiated = await useCases.initiateEvidenceUpload({
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      filename: "proof.jpg",
+      mime: "image/jpeg",
+      bytes: bytes.length,
+      sha256: checksumHex
+    });
+    const tempKey = initiated.asset.temporaryObjectKey;
+    if (tempKey === null) {
+      throw new Error("Expected temporary object key.");
+    }
+    storage.putObject(tempKey, {
+      contentType: "image/jpeg",
+      byteSize: bytes.length,
+      checksumSha256Base64: checksumBase64,
+      etag: "\"temp-etag\"",
+      bytes
+    });
+    storage.failPermanentHeadSigning = true;
+
+    await expect(useCases.confirmEvidenceUpload({
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      assetId: initiated.asset.id,
+      type: "PHOTO",
+      title: "Photo synthetique"
+    })).rejects.toMatchObject({
+      code: "EVIDENCE_PROMOTION_AMBIGUOUS",
+      status: 503
+    });
+
+    const asset = await queryMediaAsset(initiated.asset.id);
+    expect(asset?.upload_status).toBe("VERIFYING");
+    expect(asset?.object_key).toBeNull();
+    expect(asset?.verified_at).toBeNull();
+    expect(asset?.rejection_code).toBeNull();
+    expect(storage.promoteCalls).toBe(1);
+    expect(storage.objects.has(permanentEvidenceKey(ids.tenant, initiated.asset.id, tempKey))).toBe(true);
+  });
+
+  it("returns pending again when temp head signing fails before CopyObject", async () => {
+    const projectUseCases = createUseCases([ids.project]);
+    await projectUseCases.createProjectDraft({
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      ownerOrganizationId: ids.groupA,
+      title: "Jardin communautaire"
+    });
+
+    const storage = new FakeObjectStorage();
+    const useCases = createEvidenceUseCases(storage, [ids.projectTwo]);
+    const bytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47]);
+    const checksumHex = hashHex(bytes);
+    const initiated = await useCases.initiateEvidenceUpload({
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      filename: "proof.png",
+      mime: "image/png",
+      bytes: bytes.length,
+      sha256: checksumHex
+    });
+    const tempKey = initiated.asset.temporaryObjectKey;
+    if (tempKey === null) {
+      throw new Error("Expected temporary object key.");
+    }
+    storage.putObject(tempKey, {
+      contentType: "image/png",
+      byteSize: bytes.length,
+      checksumSha256Base64: Buffer.from(checksumHex, "hex").toString("base64"),
+      etag: "\"temp-etag\"",
+      bytes
+    });
+    storage.failTempHead = true;
+
+    await expect(useCases.confirmEvidenceUpload({
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      assetId: initiated.asset.id,
+      type: "PHOTO",
+      title: "Photo synthetique"
+    })).rejects.toMatchObject({
+      code: "EVIDENCE_STORAGE_UNAVAILABLE",
+      status: 503
+    });
+
+    const asset = await queryMediaAsset(initiated.asset.id);
+    expect(asset?.upload_status).toBe("PENDING_UPLOAD");
+    expect(asset?.object_key).toBeNull();
+    expect(storage.promoteCalls).toBe(0);
+  });
+
+  it("returns pending again when the verification body read is interrupted", async () => {
+    const projectUseCases = createUseCases([ids.project]);
+    await projectUseCases.createProjectDraft({
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      ownerOrganizationId: ids.groupA,
+      title: "Jardin communautaire"
+    });
+
+    const storage = new FakeObjectStorage();
+    const useCases = createEvidenceUseCases(storage, [ids.projectTwo]);
+    const bytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47]);
+    const checksumHex = hashHex(bytes);
+    const initiated = await useCases.initiateEvidenceUpload({
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      filename: "proof.png",
+      mime: "image/png",
+      bytes: bytes.length,
+      sha256: checksumHex
+    });
+    const tempKey = initiated.asset.temporaryObjectKey;
+    if (tempKey === null) {
+      throw new Error("Expected temporary object key.");
+    }
+    storage.putObject(tempKey, {
+      contentType: "image/png",
+      byteSize: bytes.length,
+      checksumSha256Base64: Buffer.from(checksumHex, "hex").toString("base64"),
+      etag: "\"temp-etag\"",
+      bytes
+    });
+    // HEAD succeeds and the GET starts returning bytes, then the body fails.
+    storage.failTempReadBodyStream = true;
+
+    await expect(useCases.confirmEvidenceUpload({
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      assetId: initiated.asset.id,
+      type: "PHOTO",
+      title: "Photo synthetique"
+    })).rejects.toMatchObject({
+      code: "EVIDENCE_STORAGE_UNAVAILABLE",
+      status: 503
+    });
+
+    const asset = await queryMediaAsset(initiated.asset.id);
+    expect(asset?.upload_status).toBe("PENDING_UPLOAD");
+    expect(asset?.object_key).toBeNull();
+    expect(await queryEvidenceCount(initiated.asset.id)).toBe(0);
+    expect(storage.promoteCalls).toBe(0);
+    expect(await queryEvidenceRejectionAuditCount(initiated.asset.id)).toBe(0);
+  });
+
+  it("returns pending again when CopyObject signing fails before the request is sent", async () => {
+    const projectUseCases = createUseCases([ids.project]);
+    await projectUseCases.createProjectDraft({
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      ownerOrganizationId: ids.groupA,
+      title: "Jardin communautaire"
+    });
+
+    const storage = new FakeObjectStorage();
+    const useCases = createEvidenceUseCases(storage, [ids.projectTwo]);
+    const bytes = Uint8Array.from([0xff, 0xd8, 0xff, 0x02]);
+    const checksumHex = hashHex(bytes);
+    const initiated = await useCases.initiateEvidenceUpload({
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      filename: "proof.jpg",
+      mime: "image/jpeg",
+      bytes: bytes.length,
+      sha256: checksumHex
+    });
+    const tempKey = initiated.asset.temporaryObjectKey;
+    if (tempKey === null) {
+      throw new Error("Expected temporary object key.");
+    }
+    storage.putObject(tempKey, {
+      contentType: "image/jpeg",
+      byteSize: bytes.length,
+      checksumSha256Base64: Buffer.from(checksumHex, "hex").toString("base64"),
+      etag: "\"temp-etag-copy\"",
+      bytes
+    });
+    storage.failCopyBeforeRequest = true;
+
+    await expect(useCases.confirmEvidenceUpload({
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      assetId: initiated.asset.id,
+      type: "PHOTO",
+      title: "Photo synthetique"
+    })).rejects.toMatchObject({
+      code: "EVIDENCE_STORAGE_UNAVAILABLE",
+      status: 503
+    });
+
+    const asset = await queryMediaAsset(initiated.asset.id);
+    expect(asset?.upload_status).toBe("PENDING_UPLOAD");
+    expect(storage.promoteCalls).toBe(1);
+    expect(storage.objects.has(permanentEvidenceKey(ids.tenant, initiated.asset.id, tempKey))).toBe(false);
+  });
+
+  it("keeps VERIFYING when CopyObject network failure leaves promotion ambiguous", async () => {
+    const projectUseCases = createUseCases([ids.project]);
+    await projectUseCases.createProjectDraft({
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      ownerOrganizationId: ids.groupA,
+      title: "Jardin communautaire"
+    });
+
+    const storage = new FakeObjectStorage();
+    const useCases = createEvidenceUseCases(storage, [ids.projectTwo]);
+    const bytes = Uint8Array.from([0xff, 0xd8, 0xff, 0x03]);
+    const checksumHex = hashHex(bytes);
+    const initiated = await useCases.initiateEvidenceUpload({
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      filename: "proof.jpg",
+      mime: "image/jpeg",
+      bytes: bytes.length,
+      sha256: checksumHex
+    });
+    const tempKey = initiated.asset.temporaryObjectKey;
+    if (tempKey === null) {
+      throw new Error("Expected temporary object key.");
+    }
+    storage.putObject(tempKey, {
+      contentType: "image/jpeg",
+      byteSize: bytes.length,
+      checksumSha256Base64: Buffer.from(checksumHex, "hex").toString("base64"),
+      etag: "\"temp-etag-copy-ambiguous\"",
+      bytes
+    });
+    storage.failCopyAmbiguous = true;
+
+    await expect(useCases.confirmEvidenceUpload({
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      assetId: initiated.asset.id,
+      type: "PHOTO",
+      title: "Photo synthetique"
+    })).rejects.toMatchObject({
+      code: "EVIDENCE_PROMOTION_AMBIGUOUS",
+      status: 503
+    });
+
+    const asset = await queryMediaAsset(initiated.asset.id);
+    expect(asset?.upload_status).toBe("VERIFYING");
+    expect(storage.promoteCalls).toBe(1);
+    expect(storage.objects.has(permanentEvidenceKey(ids.tenant, initiated.asset.id, tempKey))).toBe(false);
+  });
+
+  it("serializes double confirm, submit and DB failure after promotion", async () => {
+    const projectUseCases = createUseCases([ids.project, ids.projectTwo, ids.projectTenantB]);
+    await projectUseCases.createProjectDraft({
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      ownerOrganizationId: ids.groupA,
+      title: "Jardin communautaire"
+    });
+    const storage = new FakeObjectStorage();
+    const evidenceUseCases = createEvidenceUseCases(storage, [ids.projectTwo]);
+    const bytes = Uint8Array.from([0xff, 0xd8, 0xff, 0x00]);
+    const checksumHex = hashHex(bytes);
+    const initiated = await evidenceUseCases.initiateEvidenceUpload({
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      filename: "proof.jpg",
+      mime: "image/jpeg",
+      bytes: bytes.length,
+      sha256: checksumHex
+    });
+    const tempKey = initiated.asset.temporaryObjectKey;
+    if (tempKey === null) {
+      throw new Error("Expected temporary object key.");
+    }
+    storage.putObject(tempKey, {
+      contentType: "image/jpeg",
+      byteSize: bytes.length,
+      checksumSha256Base64: Buffer.from(checksumHex, "hex").toString("base64"),
+      etag: "\"temp-etag\"",
+      bytes
+    });
+
+    const confirmResults = await Promise.allSettled([
+      evidenceUseCases.confirmEvidenceUpload({
+        actor: evidenceOwnerActor(),
+        tenantId: ids.tenant,
+        projectId: ids.project,
+        assetId: initiated.asset.id,
+        type: "PHOTO",
+        title: "Photo synthetique"
+      }),
+      evidenceUseCases.confirmEvidenceUpload({
+        actor: evidenceOwnerActor(),
+        tenantId: ids.tenant,
+        projectId: ids.project,
+        assetId: initiated.asset.id,
+        type: "PHOTO",
+        title: "Photo synthetique"
+      })
+    ]);
+    expect(storage.promoteCalls).toBe(1);
+    expect(storage.readCalls).toBe(1);
+    expect(confirmResults.some((result) => result.status === "fulfilled")).toBe(true);
+
+    const asset = await queryMediaAsset(initiated.asset.id);
+    expect(asset?.upload_status).toBe("VERIFIED");
+    const evidenceCount = await queryEvidenceCount(initiated.asset.id);
+    expect(evidenceCount).toBe(1);
+
+    const sharedSubmitGenerator = makeIdGenerator(
+      ["abababab-abab-4aba-8aba-abababababab"],
+      "efefefef-efef-4efe-8efe-"
+    );
+    const submitUseCases = new ProjectUseCases(
+      createPgProjectRepository(databaseUrl),
+      sharedSubmitGenerator,
+      { now: () => now }
+    );
+    const submitProject = await submitUseCases.createProjectDraft({
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      ownerOrganizationId: ids.groupA,
+      title: "Projet concours",
+      problemStatement: "Un probleme synthetique a traiter.",
+      diagnostic: "Un diagnostic synthetique verifie."
+    });
+    const submitStorage = new FakeObjectStorage();
+    const submitEvidenceUseCases = new EvidenceUseCases(
+      createPgEvidenceRepository(databaseUrl),
+      submitStorage,
+      sharedSubmitGenerator,
+      { now: () => now }
+    );
+    const submitBytes = Uint8Array.from([0xff, 0xd8, 0xff, 0x01]);
+    const submitChecksumHex = hashHex(submitBytes);
+    const submittedAssetId = "bcbcbcbc-bcbc-4bcb-8bcb-bcbcbcbcbcbc";
+    const submittedTempKey = `tmp/evidence/${ids.tenant}/${submittedAssetId}/nonce`;
+    const submitPool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+    try {
+      await submitPool.query(
+        `INSERT INTO media_asset (
+          id, tenant_id, project_id, temporary_object_key, mime, byte_size,
+          sha256, classification, uploaded_by_account_id, upload_expires_at
+        )
+        VALUES ($1, $2, $3, $4, 'image/jpeg', $5, $6, 'P3', $7, $8)`,
+        [
+          submittedAssetId,
+          ids.tenant,
+          submitProject.project.id,
+          submittedTempKey,
+          submitBytes.length,
+          submitChecksumHex,
+          ids.account,
+          new Date("2026-07-26T12:00:00.000Z")
+        ]
+      );
+      submitStorage.putObject(submittedTempKey, {
+        contentType: "image/jpeg",
+        byteSize: submitBytes.length,
+        checksumSha256Base64: Buffer.from(submitChecksumHex, "hex").toString("base64"),
+        etag: "\"temp-etag-submit\"",
+        bytes: submitBytes
+      });
+      const submitRace = await Promise.allSettled([
+        submitEvidenceUseCases.confirmEvidenceUpload({
+          actor: evidenceOwnerActor(),
+          tenantId: ids.tenant,
+          projectId: submitProject.project.id,
+          assetId: submittedAssetId,
+          type: "PHOTO",
+          title: "Photo synthetique"
+        }),
+        submitUseCases.submitProjectForReview({
+          actor: evidenceOwnerActor(),
+          tenantId: ids.tenant,
+          projectId: submitProject.project.id,
+          expectedVersion: submitProject.project.version
+        })
+      ]);
+      const [confirmOutcome, submitOutcome] = submitRace;
+      if (confirmOutcome === undefined || submitOutcome === undefined) {
+        throw new Error("Expected both race outcomes.");
+      }
+      // The conservative strategy lets the Evidence confirmation win: whichever
+      // order the row locks are acquired in, submit observes the asset as
+      // PENDING_UPLOAD or VERIFYING and is rejected by the pending-evidence
+      // guard rather than by readiness or any other validation.
+      expect(confirmOutcome.status).toBe("fulfilled");
+      expect(submitOutcome.status).toBe("rejected");
+      if (submitOutcome.status !== "rejected") {
+        throw new Error("Expected submit to be rejected.");
+      }
+      expect(submitOutcome.reason).toMatchObject({
+        code: "PROJECT_EVIDENCE_UPLOADS_PENDING",
+        status: 409
+      });
+
+      expect(await queryProjectStatus(submitProject.project.id)).toBe("DRAFT");
+      expect(await queryEvidenceCount(submittedAssetId)).toBe(1);
+      const raceAsset = await queryMediaAsset(submittedAssetId);
+      expect(raceAsset?.upload_status).toBe("VERIFIED");
+      expect(submitStorage.readCalls).toBe(1);
+      expect(submitStorage.promoteCalls).toBe(1);
+    } finally {
+      await submitPool.end();
+    }
+
+    const failingRepository: EvidenceRepository = {
+      transaction<TResult>(handler: (transaction: EvidenceTransaction) => Promise<TResult>): Promise<TResult> {
+        return createPgEvidenceRepository(databaseUrl).transaction(async (transaction: EvidenceTransaction) => {
+          const failingTransaction = Object.create(transaction) as EvidenceTransaction;
+          failingTransaction.insertEvidence = () => Promise.reject(new Error("simulated db failure after promotion"));
+          return handler(failingTransaction);
+        });
+      }
+    };
+    const failureUseCases = new EvidenceUseCases(
+      failingRepository,
+      storage,
+      makeIdGenerator([
+        "acacacac-acac-4aca-8aca-acacacacacac",
+        "adadadad-adad-4ada-8ada-adadadadadad"
+      ]),
+      { now: () => now }
+    );
+    const failureAssetId = "acacacac-acac-4aca-8aca-acacacacacaf";
+    const failureTempKey = `tmp/evidence/${ids.tenant}/${failureAssetId}/nonce`;
+    const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+    try {
+      await pool.query(
+        `INSERT INTO media_asset (
+          id, tenant_id, project_id, temporary_object_key, mime, byte_size,
+          sha256, classification, uploaded_by_account_id, upload_expires_at
+        )
+        VALUES ($1, $2, $3, $4, 'image/jpeg', $5, $6, 'P3', $7, $8)`,
+        [
+          failureAssetId,
+          ids.tenant,
+          ids.project,
+          failureTempKey,
+          bytes.length,
+          checksumHex,
+          ids.account,
+          new Date("2026-07-26T12:00:00.000Z")
+        ]
+      );
+      storage.putObject(failureTempKey, {
+        contentType: "image/jpeg",
+        byteSize: bytes.length,
+        checksumSha256Base64: Buffer.from(checksumHex, "hex").toString("base64"),
+        etag: "\"temp-etag-2\"",
+        bytes
+      });
+      await expect(failureUseCases.confirmEvidenceUpload({
+        actor: evidenceOwnerActor(),
+        tenantId: ids.tenant,
+        projectId: ids.project,
+        assetId: failureAssetId,
+        type: "PHOTO",
+        title: "Photo synthetique"
+      })).rejects.toThrow("simulated db failure after promotion");
+      const failureState = await queryMediaAsset(failureAssetId);
+      expect(failureState?.upload_status).toBe("VERIFYING");
+      expect(storage.objects.has(permanentEvidenceKey(ids.tenant, failureAssetId, failureTempKey))).toBe(true);
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it("blocks submission while an Evidence upload is pending and releases it once finalized", async () => {
+    // The project is complete for review from the start: problemStatement,
+    // diagnostic and an ACTIVE project lead. Any submission failure below can
+    // therefore only come from the pending-evidence guard, never from readiness.
+    const projectUseCases = createUseCases([ids.project]);
+    const created = await projectUseCases.createProjectDraft({
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      ownerOrganizationId: ids.groupA,
+      title: "Jardin communautaire",
+      problemStatement: "Un probleme synthetique a traiter.",
+      diagnostic: "Un diagnostic synthetique verifie."
+    });
+    const submitInput = {
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      expectedVersion: created.project.version
+    };
+
+    const storage = new FakeObjectStorage();
+    // Distinct fallback namespace: this test drives the project and evidence
+    // use cases against the same audit_event table.
+    const evidenceUseCases = createEvidenceUseCases(storage, [ids.projectTwo], "eaeaeaea-eaea-4eae-8eae-");
+    const bytes = Uint8Array.from([0xff, 0xd8, 0xff, 0x00]);
+    const checksumHex = hashHex(bytes);
+    const initiated = await evidenceUseCases.initiateEvidenceUpload({
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      filename: "proof.jpg",
+      mime: "image/jpeg",
+      bytes: bytes.length,
+      sha256: checksumHex
+    });
+    const tempKey = initiated.asset.temporaryObjectKey;
+    if (tempKey === null) {
+      throw new Error("Expected temporary object key.");
+    }
+    expect((await queryMediaAsset(initiated.asset.id))?.upload_status).toBe("PENDING_UPLOAD");
+
+    // 1. PENDING_UPLOAD blocks submission.
+    await expect(projectUseCases.submitProjectForReview(submitInput)).rejects.toMatchObject({
+      code: "PROJECT_EVIDENCE_UPLOADS_PENDING",
+      status: 409
+    });
+    expect(await queryProjectStatus(ids.project)).toBe("DRAFT");
+    expect(await queryApprovalRequestCount(ids.project)).toBe(0);
+
+    // The same guard holds mid-verification, not only before the upload starts.
+    await claimAssetForVerification(initiated.asset.id);
+    expect((await queryMediaAsset(initiated.asset.id))?.upload_status).toBe("VERIFYING");
+    await expect(projectUseCases.submitProjectForReview(submitInput)).rejects.toMatchObject({
+      code: "PROJECT_EVIDENCE_UPLOADS_PENDING",
+      status: 409
+    });
+    expect(await queryProjectStatus(ids.project)).toBe("DRAFT");
+    expect(await queryApprovalRequestCount(ids.project)).toBe(0);
+    await releaseVerificationClaim(initiated.asset.id);
+
+    // 2. Finalizing the Evidence releases the guard.
+    storage.putObject(tempKey, {
+      contentType: "image/jpeg",
+      byteSize: bytes.length,
+      checksumSha256Base64: Buffer.from(checksumHex, "hex").toString("base64"),
+      etag: "\"temp-etag-submit-guard\"",
+      bytes
+    });
+    await evidenceUseCases.confirmEvidenceUpload(confirmInput(initiated.asset.id));
+    expect((await queryMediaAsset(initiated.asset.id))?.upload_status).toBe("VERIFIED");
+    expect(await queryEvidenceCount(initiated.asset.id)).toBe(1);
+
+    // This submit succeeds on the same project, same fields and same
+    // expectedVersion as the two that were refused above. Only the Evidence
+    // state changed, which is what proves the earlier refusals came from the
+    // pending-evidence guard and not from an incomplete readiness check: an
+    // unready project would fail here with PROJECT_NOT_READY_FOR_REVIEW.
+    const submitted = await projectUseCases.submitProjectForReview(submitInput);
+    expect(submitted.project.project.status).toBe("READY_FOR_REVIEW");
+    expect(await queryProjectStatus(ids.project)).toBe("READY_FOR_REVIEW");
+    expect(await queryApprovalRequestCount(ids.project)).toBe(1);
+  });
+
+  it("returns the same Evidence when the same confirmation is replayed", async () => {
+    const { useCases, storage, assetId } = await stageVerifiableUpload();
+
+    const first = await useCases.confirmEvidenceUpload(confirmInput(assetId));
+    const second = await useCases.confirmEvidenceUpload(confirmInput(assetId));
+    const third = await useCases.confirmEvidenceUpload(confirmInput(assetId));
+
+    // A replay is answered from the existing row: same Evidence, and no second
+    // trip to storage. It must never surface as a 500 or a duplicate.
+    expect(second.evidence.id).toBe(first.evidence.id);
+    expect(third.evidence.id).toBe(first.evidence.id);
+    expect(await queryEvidenceCount(assetId)).toBe(1);
+    expect(storage.readCalls).toBe(1);
+    expect(storage.promoteCalls).toBe(1);
+    const asset = await queryMediaAsset(assetId);
+    expect(asset?.upload_status).toBe("VERIFIED");
+  });
+
+  it("rejects a replay that changes the Evidence metadata instead of overwriting it", async () => {
+    const { useCases, assetId } = await stageVerifiableUpload();
+
+    const created = await useCases.confirmEvidenceUpload(confirmInput(assetId));
+
+    await expect(useCases.confirmEvidenceUpload({
+      ...confirmInput(assetId),
+      title: "Un titre different"
+    })).rejects.toMatchObject({ status: 409 });
+
+    expect(await queryEvidenceCount(assetId)).toBe(1);
+    const details = await useCases.listEvidence({
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      limit: 10,
+      cursor: null
+    });
+    expect(details.items.map((item) => item.evidence.id)).toEqual([created.evidence.id]);
+    expect(details.items[0]?.evidence.title).toBe("Photo synthetique");
+  });
+
+  it("lets only one of two simultaneous confirmations promote the object", async () => {
+    const { useCases, storage, assetId } = await stageVerifiableUpload();
+
+    // The guard is the conditional PENDING_UPLOAD -> VERIFYING claim plus the
+    // evidence_media_asset_unique constraint, not R2: the fake storage happily
+    // serves both callers, so anything that slipped through would double-promote.
+    const outcomes = await Promise.allSettled([
+      useCases.confirmEvidenceUpload(confirmInput(assetId)),
+      useCases.confirmEvidenceUpload(confirmInput(assetId))
+    ]);
+
+    const fulfilled = outcomes.filter((outcome) => outcome.status === "fulfilled");
+    const rejected = outcomes.filter((outcome) => outcome.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    // The loser is told verification is in flight, not handed a 500.
+    expect(rejected[0]?.reason).toMatchObject({
+      code: "EVIDENCE_VERIFICATION_IN_PROGRESS",
+      status: 409
+    });
+
+    expect(storage.readCalls).toBe(1);
+    expect(storage.promoteCalls).toBe(1);
+    expect(await queryEvidenceCount(assetId)).toBe(1);
+    const asset = await queryMediaAsset(assetId);
+    expect(asset?.upload_status).toBe("VERIFIED");
+    expect(asset?.object_key).not.toBeNull();
+  });
+
+  it("rejects an object whose stored MIME contradicts the declared MIME", async () => {
+    const { useCases, storage, assetId, tempKey } = await stageVerifiableUpload();
+    const stored = storage.objects.get(tempKey);
+    if (stored === undefined) {
+      throw new Error("Expected staged object.");
+    }
+    storage.putObject(tempKey, { ...stored, contentType: "application/pdf" });
+
+    await expect(useCases.confirmEvidenceUpload(confirmInput(assetId))).rejects.toMatchObject({
+      code: "MIME_MISMATCH",
+      status: 422
+    });
+
+    const asset = await queryMediaAsset(assetId);
+    expect(asset?.upload_status).toBe("REJECTED");
+    expect(asset?.rejection_code).toBe("MIME_MISMATCH");
+    expect(asset?.object_key).toBeNull();
+    expect(await queryEvidenceCount(assetId)).toBe(0);
+    expect(storage.promoteCalls).toBe(0);
+  });
+
+  it("rejects an object whose magic bytes contradict the declared MIME", async () => {
+    // Declared and stored as image/jpeg, and the checksum matches the bytes, so
+    // only the magic-byte check can catch that this is really a PDF.
+    const disguised = Uint8Array.from([0x25, 0x50, 0x44, 0x46]);
+    const { useCases, storage, assetId } = await stageVerifiableUpload({ bytes: disguised });
+
+    await expect(useCases.confirmEvidenceUpload(confirmInput(assetId))).rejects.toMatchObject({
+      code: "MAGIC_BYTES_MISMATCH",
+      status: 422
+    });
+
+    const asset = await queryMediaAsset(assetId);
+    expect(asset?.upload_status).toBe("REJECTED");
+    expect(asset?.rejection_code).toBe("MAGIC_BYTES_MISMATCH");
+    expect(await queryEvidenceCount(assetId)).toBe(0);
+    expect(storage.promoteCalls).toBe(0);
+  });
+
+  it("rejects a confirmation when the uploaded object never reached storage", async () => {
+    const { useCases, storage, assetId, tempKey } = await stageVerifiableUpload();
+    // The client asked for an upload URL but never completed the PUT.
+    storage.objects.delete(tempKey);
+
+    await expect(useCases.confirmEvidenceUpload(confirmInput(assetId))).rejects.toMatchObject({
+      code: "OBJECT_NOT_FOUND",
+      status: 422
+    });
+
+    const asset = await queryMediaAsset(assetId);
+    expect(asset?.upload_status).toBe("REJECTED");
+    expect(asset?.rejection_code).toBe("OBJECT_NOT_FOUND");
+    expect(await queryEvidenceCount(assetId)).toBe(0);
+    expect(storage.promoteCalls).toBe(0);
+  });
+
+  it("rejects a confirmation once the project has left an uploadable status", async () => {
+    const { useCases, storage, assetId } = await stageVerifiableUpload();
+    // Moved with SQL on purpose: submitProjectForReview would be refused by the
+    // pending-evidence guard, and the behaviour under test is the confirmation
+    // guard, not the submission path.
+    const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+    try {
+      await pool.query("UPDATE project SET status = 'READY_FOR_REVIEW' WHERE id = $1", [ids.project]);
+    } finally {
+      await pool.end();
+    }
+    expect(await queryProjectStatus(ids.project)).toBe("READY_FOR_REVIEW");
+
+    await expect(useCases.confirmEvidenceUpload(confirmInput(assetId))).rejects.toMatchObject({
+      code: "EVIDENCE_PROJECT_STATUS_FORBIDDEN",
+      status: 422
+    });
+
+    // Refused before any storage work and without burning the pending upload.
+    expect(storage.readCalls).toBe(0);
+    expect(storage.promoteCalls).toBe(0);
+    expect(await queryEvidenceCount(assetId)).toBe(0);
+    expect((await queryMediaAsset(assetId))?.upload_status).toBe("PENDING_UPLOAD");
+  });
+
+  it("refuses download URLs without permission, across tenants, and for unverified assets", async () => {
+    const { useCases, storage, assetId } = await stageVerifiableUpload();
+    const created = await useCases.confirmEvidenceUpload(confirmInput(assetId));
+    const downloadInput = {
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      evidenceId: created.evidence.id
+    };
+
+    // Holds evidence.read but not evidence.download.
+    await expect(useCases.createDownloadUrl({
+      ...downloadInput,
+      actor: evidenceReaderActor()
+    })).rejects.toMatchObject({ status: 403 });
+
+    // Correct permissions, but the actor's scope belongs to another tenant, so
+    // the authz decision denies before any URL is signed.
+    await expect(useCases.createDownloadUrl({
+      ...downloadInput,
+      actor: foreignTenantEvidenceActor()
+    })).rejects.toMatchObject({ status: 403 });
+
+    // Signed URLs are short-lived by construction, never permanent.
+    const signed = await useCases.createDownloadUrl({
+      ...downloadInput,
+      actor: evidenceOwnerActor()
+    });
+    const ttlSeconds = (signed.expiresAt.getTime() - Date.now()) / 1000;
+    expect(ttlSeconds).toBeGreaterThan(0);
+    expect(ttlSeconds).toBeLessThanOrEqual(evidenceDownloadUrlTtlSeconds);
+    expect(storage.downloadSignCalls).toBe(1);
+
+    // An asset that never reached VERIFIED has no downloadable object.
+    const pendingAssetId = "bdbdbdbd-bdbd-4bdb-8bdb-bdbdbdbdbdbd";
+    await expect(useCases.createDownloadUrl({
+      ...downloadInput,
+      actor: evidenceOwnerActor(),
+      evidenceId: pendingAssetId
+    })).rejects.toMatchObject({ status: 404 });
+  });
+});
 
 function ownerAndReviewerActor(input: {
   readonly accountId?: string;

@@ -1,5 +1,6 @@
 import {
   check,
+  bigint,
   foreignKey,
   index,
   integer,
@@ -235,6 +236,48 @@ export const approvalDecision = pgEnum("approval_decision_type", [
 export const projectCommentKind = pgEnum("project_comment_kind", [
   "GLOBAL",
   "FIELD"
+]);
+
+export const evidenceClassification = pgEnum("evidence_classification", [
+  "P1",
+  "P2",
+  "P3"
+]);
+
+export const mediaUploadStatus = pgEnum("media_upload_status", [
+  "PENDING_UPLOAD",
+  "VERIFYING",
+  "VERIFIED",
+  "REJECTED"
+]);
+
+export const mediaScanStatus = pgEnum("media_scan_status", [
+  "NOT_SCANNED"
+]);
+
+export const evidenceType = pgEnum("evidence_type", [
+  "PHOTO",
+  "VIDEO_LINK",
+  "DOCUMENT",
+  "ATTESTATION",
+  "ATTENDANCE_LIST",
+  "MEASUREMENT",
+  "LOCATION",
+  "TESTIMONIAL",
+  "YOUTH_OUTPUT",
+  "RECEIPT",
+  "EXTERNAL_CAPTURE"
+]);
+
+export const evidenceVisibility = pgEnum("evidence_visibility", [
+  "PRIVATE",
+  "INTERNAL"
+]);
+
+export const evidenceValidationStatus = pgEnum("evidence_validation_status", [
+  "UNREVIEWED",
+  "VALIDATED",
+  "REJECTED"
 ]);
 
 export const account = pgTable(
@@ -786,5 +829,122 @@ export const projectComment = pgTable(
     check("project_comment_body_length", sql`length(${table.body}) <= 4000`),
     check("project_comment_kind_field_consistent", sql`(${table.kind} = 'GLOBAL' AND ${table.fieldKey} IS NULL) OR (${table.kind} = 'FIELD' AND ${table.fieldKey} IS NOT NULL)`),
     check("project_comment_field_allowlist", sql`${table.fieldKey} IS NULL OR ${table.fieldKey} IN ('title', 'summary', 'problemStatement', 'diagnostic', 'projectMode', 'visibility', 'locationLabel', 'plannedStartAt', 'plannedEndAt', 'actualStartAt', 'actualEndAt')`)
+  ]
+);
+
+export const mediaAsset = pgTable(
+  "media_asset",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    projectId: uuid("project_id").notNull(),
+    temporaryObjectKey: text("temporary_object_key"),
+    objectKey: text("object_key"),
+    mime: text("mime").notNull(),
+    byteSize: bigint("byte_size", { mode: "number" }).notNull(),
+    sha256: text("sha256").notNull(),
+    etag: text("etag"),
+    classification: evidenceClassification("classification").notNull().default("P3"),
+    uploadStatus: mediaUploadStatus("upload_status").notNull().default("PENDING_UPLOAD"),
+    scanStatus: mediaScanStatus("scan_status").notNull().default("NOT_SCANNED"),
+    uploadedByAccountId: uuid("uploaded_by_account_id").notNull(),
+    uploadExpiresAt: timestamp("upload_expires_at", { withTimezone: true }).notNull(),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    rejectedAt: timestamp("rejected_at", { withTimezone: true }),
+    rejectionCode: text("rejection_code"),
+    width: integer("width"),
+    height: integer("height"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    unique("media_asset_id_tenant_unique").on(table.id, table.tenantId),
+    unique("media_asset_id_project_tenant_unique").on(table.id, table.projectId, table.tenantId),
+    uniqueIndex("media_asset_object_key_unique")
+      .on(table.tenantId, table.objectKey)
+      .where(sql`${table.objectKey} IS NOT NULL`),
+    uniqueIndex("media_asset_temp_key_unique")
+      .on(table.tenantId, table.temporaryObjectKey)
+      .where(sql`${table.temporaryObjectKey} IS NOT NULL`),
+    foreignKey({
+      columns: [table.projectId, table.tenantId],
+      foreignColumns: [project.id, project.tenantId],
+      name: "media_asset_project_same_tenant_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    foreignKey({
+      columns: [table.uploadedByAccountId, table.tenantId],
+      foreignColumns: [accountPersonLink.accountId, accountPersonLink.tenantId],
+      name: "media_asset_uploaded_by_tenant_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    index("media_asset_project_status_idx").on(table.tenantId, table.projectId, table.uploadStatus),
+    index("media_asset_uploader_status_idx").on(table.tenantId, table.uploadedByAccountId, table.uploadStatus),
+    check("media_asset_mime_allowlist", sql`${table.mime} IN ('image/jpeg', 'image/png', 'application/pdf')`),
+    check("media_asset_byte_size_positive", sql`${table.byteSize} > 0`),
+    check("media_asset_sha256_hex", sql`${table.sha256} ~ '^[a-f0-9]{64}$'`),
+    check("media_asset_dimensions_positive", sql`(${table.width} IS NULL OR ${table.width} > 0) AND (${table.height} IS NULL OR ${table.height} > 0)`),
+    check(
+      "media_asset_pending_shape",
+      sql`${table.uploadStatus} <> 'PENDING_UPLOAD' OR (${table.temporaryObjectKey} IS NOT NULL AND ${table.objectKey} IS NULL AND ${table.verifiedAt} IS NULL AND ${table.rejectedAt} IS NULL AND ${table.rejectionCode} IS NULL)`
+    ),
+    check(
+      "media_asset_verifying_shape",
+      sql`${table.uploadStatus} <> 'VERIFYING' OR (${table.temporaryObjectKey} IS NOT NULL AND ${table.objectKey} IS NULL AND ${table.verifiedAt} IS NULL AND ${table.rejectedAt} IS NULL AND ${table.rejectionCode} IS NULL)`
+    ),
+    check(
+      "media_asset_verified_shape",
+      sql`${table.uploadStatus} <> 'VERIFIED' OR (${table.temporaryObjectKey} IS NOT NULL AND ${table.objectKey} IS NOT NULL AND ${table.verifiedAt} IS NOT NULL AND ${table.rejectedAt} IS NULL AND ${table.rejectionCode} IS NULL)`
+    ),
+    check(
+      "media_asset_rejected_shape",
+      sql`${table.uploadStatus} <> 'REJECTED' OR (${table.objectKey} IS NULL AND ${table.verifiedAt} IS NULL AND ${table.rejectedAt} IS NOT NULL AND ${table.rejectionCode} IS NOT NULL)`
+    )
+  ]
+);
+
+export const evidence = pgTable(
+  "evidence",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    projectId: uuid("project_id").notNull(),
+    mediaAssetId: uuid("media_asset_id").notNull(),
+    type: evidenceType("type").notNull(),
+    title: text("title").notNull(),
+    description: text("description"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }),
+    visibility: evidenceVisibility("visibility").notNull().default("PRIVATE"),
+    validationStatus: evidenceValidationStatus("validation_status").notNull().default("UNREVIEWED"),
+    createdByAccountId: uuid("created_by_account_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    unique("evidence_id_tenant_unique").on(table.id, table.tenantId),
+    unique("evidence_media_asset_unique").on(table.mediaAssetId),
+    foreignKey({
+      columns: [table.projectId, table.tenantId],
+      foreignColumns: [project.id, project.tenantId],
+      name: "evidence_project_same_tenant_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    foreignKey({
+      columns: [table.mediaAssetId, table.tenantId],
+      foreignColumns: [mediaAsset.id, mediaAsset.tenantId],
+      name: "evidence_media_asset_same_tenant_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    foreignKey({
+      columns: [table.mediaAssetId, table.projectId, table.tenantId],
+      foreignColumns: [mediaAsset.id, mediaAsset.projectId, mediaAsset.tenantId],
+      name: "evidence_media_asset_project_tenant_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    foreignKey({
+      columns: [table.createdByAccountId, table.tenantId],
+      foreignColumns: [accountPersonLink.accountId, accountPersonLink.tenantId],
+      name: "evidence_created_by_tenant_fk"
+    }).onDelete("restrict").onUpdate("restrict"),
+    index("evidence_project_created_idx").on(table.tenantId, table.projectId, table.createdAt, table.id),
+    check("evidence_title_not_empty", sql`length(btrim(${table.title})) > 0`),
+    check("evidence_title_length", sql`length(${table.title}) <= 160`),
+    check("evidence_description_length", sql`${table.description} IS NULL OR length(${table.description}) <= 2000`),
+    check("evidence_slice5_type_allowlist", sql`${table.type} IN ('PHOTO', 'DOCUMENT', 'ATTESTATION', 'EXTERNAL_CAPTURE')`)
   ]
 );

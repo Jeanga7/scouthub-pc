@@ -1,28 +1,189 @@
+import { AwsClient } from "aws4fetch";
+import { ObjectStorageError } from "@scouthub/application";
 import type {
+  CreateDownloadUrlInput,
   CreateUploadUrlInput,
-  ObjectHandle,
+  ObjectHead,
   ObjectStorage,
-  SignedUrl
+  PromoteObjectInput,
+  SignedObjectUrl
 } from "@scouthub/application";
 
-export interface R2ObjectStorageBinding {
-  createSignedUploadUrl(input: CreateUploadUrlInput): Promise<SignedUrl>;
-  createSignedDownloadUrl(object: ObjectHandle): Promise<SignedUrl>;
-  delete(key: string): Promise<void>;
+export interface R2ObjectStorageConfig {
+  readonly accountId: string;
+  readonly bucketName: string;
+  readonly accessKeyId: string;
+  readonly secretAccessKey: string;
+  readonly fetch?: typeof fetch;
 }
 
-export function createR2ObjectStorageAdapter(
-  bucket: R2ObjectStorageBinding
-): ObjectStorage {
+export function createR2ObjectStorageAdapter(config: R2ObjectStorageConfig): ObjectStorage {
+  const client = new AwsClient({
+    accessKeyId: config.accessKeyId,
+    secretAccessKey: config.secretAccessKey,
+    service: "s3",
+    region: "auto"
+  });
+  const fetcher = config.fetch ?? fetch;
+  const baseUrl = `https://${config.accountId}.r2.cloudflarestorage.com/${config.bucketName}`;
+
   return {
-    createUploadUrl(input) {
-      return bucket.createSignedUploadUrl(input);
+    async createUploadUrl(input: CreateUploadUrlInput): Promise<SignedObjectUrl> {
+      const headers = { "Content-Type": input.contentType };
+      const signed = await signRequest(client, objectUrl(baseUrl, input.key, input.expiresInSeconds), {
+        method: "PUT",
+        headers,
+        aws: {
+          signQuery: true,
+          allHeaders: true
+        }
+      });
+      return {
+        url: signed.url,
+        method: "PUT",
+        expiresAt: new Date(Date.now() + input.expiresInSeconds * 1000),
+        requiredHeaders: headers
+      };
     },
-    getDownloadUrl(object) {
-      return bucket.createSignedDownloadUrl(object);
+
+    async createDownloadUrl(input: CreateDownloadUrlInput): Promise<SignedObjectUrl> {
+      const signed = await signRequest(client, objectUrl(baseUrl, input.key, input.expiresInSeconds), {
+        method: "GET",
+        aws: {
+          signQuery: true
+        }
+      });
+      return {
+        url: signed.url,
+        method: "GET",
+        expiresAt: new Date(Date.now() + input.expiresInSeconds * 1000),
+        requiredHeaders: {}
+      };
     },
-    deleteObject(object) {
-      return bucket.delete(object.key);
+
+    async headObject(key: string): Promise<ObjectHead | null> {
+      const response = await fetchSigned(client, fetcher, objectUrl(baseUrl, key), { method: "HEAD" });
+      if (response.status === 404) {
+        return null;
+      }
+      if (response.status === 412) {
+        throw new ObjectStorageError("R2 source object changed.", "SOURCE_CHANGED");
+      }
+      if (!response.ok) {
+        throw storageUnavailable(`R2 HEAD failed with status ${response.status}.`);
+      }
+      return {
+        key,
+        contentType: response.headers.get("content-type"),
+        byteSize: Number(response.headers.get("content-length") ?? 0),
+        checksumSha256Base64: response.headers.get("x-amz-checksum-sha256"),
+        etag: response.headers.get("etag")
+      };
+    },
+
+    async readObjectForVerification(input: {
+      readonly key: string;
+      readonly expectedEtag: string;
+      readonly maxBytes: number;
+    }): Promise<Uint8Array | null> {
+      const response = await fetchSigned(client, fetcher, objectUrl(baseUrl, input.key), {
+        method: "GET",
+        headers: {
+          Range: `bytes=0-${Math.max(0, input.maxBytes - 1)}`,
+          "If-Match": input.expectedEtag
+        }
+      });
+      if (response.status === 404) {
+        return null;
+      }
+      if (response.status === 412) {
+        throw new ObjectStorageError("R2 source object changed.", "SOURCE_CHANGED");
+      }
+      if (!response.ok) {
+        throw storageUnavailable(`R2 verification read failed with status ${response.status}.`);
+      }
+      // The body can fail mid-stream after fetch() already resolved, so the
+      // read itself is wrapped: a truncated verification read is a transient
+      // storage failure, never evidence that the object is invalid.
+      try {
+        return new Uint8Array(await response.arrayBuffer());
+      } catch {
+        throw storageUnavailable("R2 verification body read failed.");
+      }
+    },
+
+    async promoteObject(input: PromoteObjectInput): Promise<void> {
+      // Promotion is conditional on the ETag observed during verification. If
+      // a replayed PUT replaces tmp/* between HEAD and CopyObject, R2 refuses
+      // the copy and the accepted Evidence never points at mutable content.
+      const response = await fetchSigned(client, fetcher, objectUrl(baseUrl, input.destinationKey), {
+        method: "PUT",
+        headers: {
+          "Content-Type": input.contentType,
+          "x-amz-copy-source": `/${config.bucketName}/${encodeObjectKey(input.sourceKey)}`,
+          "x-amz-copy-source-if-match": input.sourceEtag
+        }
+      });
+      if (response.status === 404) {
+        throw new ObjectStorageError("R2 source object not found.", "OBJECT_NOT_FOUND");
+      }
+      if (response.status === 412) {
+        throw new ObjectStorageError("R2 source object changed.", "SOURCE_CHANGED");
+      }
+      if (!response.ok) {
+        throw storageUnavailable(`R2 copy failed with status ${response.status}.`);
+      }
+    },
+
+    async deleteObject(key: string): Promise<void> {
+      const response = await fetchSigned(client, fetcher, objectUrl(baseUrl, key), { method: "DELETE" });
+      if (response.status === 404) {
+        return;
+      }
+      if (response.status === 412) {
+        throw new ObjectStorageError("R2 source object changed.", "SOURCE_CHANGED");
+      }
+      if (!response.ok) {
+        throw storageUnavailable(`R2 delete failed with status ${response.status}.`);
+      }
     }
   };
+}
+
+function objectUrl(baseUrl: string, key: string, expiresInSeconds?: number): string {
+  const url = new URL(`${baseUrl}/${encodeObjectKey(key)}`);
+  if (expiresInSeconds !== undefined) {
+    url.searchParams.set("X-Amz-Expires", String(expiresInSeconds));
+  }
+  return url.toString();
+}
+
+function encodeObjectKey(key: string): string {
+  return key.split("/").map(encodeURIComponent).join("/");
+}
+
+async function signRequest(client: AwsClient, url: string, init: Parameters<AwsClient["sign"]>[1]): Promise<Request> {
+  try {
+    return await client.sign(url, init);
+  } catch {
+    throw new ObjectStorageError("R2 signing failed.", "SIGNING_FAILED");
+  }
+}
+
+async function fetchSigned(
+  client: AwsClient,
+  fetcher: typeof fetch,
+  url: string,
+  init: Parameters<AwsClient["sign"]>[1]
+): Promise<Response> {
+  const signed = await signRequest(client, url, init);
+  try {
+    return await fetcher(signed);
+  } catch {
+    throw storageUnavailable("R2 request failed.");
+  }
+}
+
+function storageUnavailable(message: string): ObjectStorageError {
+  return new ObjectStorageError(message, "STORAGE_UNAVAILABLE");
 }

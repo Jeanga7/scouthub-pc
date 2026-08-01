@@ -50,6 +50,31 @@ describe("serverEnvSchema", () => {
     ).toThrow();
   });
 
+  it("requires R2 configuration outside local and test", () => {
+    expect(() =>
+      serverEnvSchema.parse({
+        APP_ENV: "production",
+        APP_ORIGIN: "https://scouthub-pc.example.test",
+        DATABASE_URL: "postgres://scouthub:scouthub@localhost:5433/scouthub",
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_live_example",
+        CLERK_SECRET_KEY: "sk_live_example"
+      })
+    ).toThrow();
+
+    const parsed = serverEnvSchema.parse({
+      APP_ENV: "production",
+      APP_ORIGIN: "https://scouthub-pc.example.test",
+      DATABASE_URL: "postgres://scouthub:scouthub@localhost:5433/scouthub",
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_live_example",
+      CLERK_SECRET_KEY: "sk_live_example",
+      R2_ACCOUNT_ID: "account",
+      R2_BUCKET_NAME: "bucket",
+      R2_ACCESS_KEY_ID: "access",
+      R2_SECRET_ACCESS_KEY: "secret"
+    });
+    expect(parsed.R2_BUCKET_NAME).toBe("bucket");
+  });
+
   it("accepts test configuration without real Clerk secrets", () => {
     const parsed = serverEnvSchema.parse({
       APP_ENV: "test",

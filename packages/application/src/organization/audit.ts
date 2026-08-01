@@ -29,10 +29,19 @@ export const projectAuditActions = [
   "project.rejected"
 ] as const;
 
+export const evidenceAuditActions = [
+  "evidence.upload_initiated",
+  "evidence.upload_verified",
+  "evidence.upload_rejected",
+  "evidence.created",
+  "evidence.download_url_issued"
+] as const;
+
 export type OrganizationAuditAction = (typeof organizationAuditActions)[number];
 export type IdentityAuditAction = (typeof identityAuditActions)[number];
 export type ProjectAuditAction = (typeof projectAuditActions)[number];
-export type AuditAction = OrganizationAuditAction | IdentityAuditAction | ProjectAuditAction;
+export type EvidenceAuditAction = (typeof evidenceAuditActions)[number];
+export type AuditAction = OrganizationAuditAction | IdentityAuditAction | ProjectAuditAction | EvidenceAuditAction;
 export type AuditActorKind = "SYSTEM" | "USER" | "SERVICE";
 
 export interface AuditActor {
@@ -43,7 +52,7 @@ export interface AuditActor {
 export interface AuditEventInput {
   readonly id: string;
   readonly tenantId: string;
-  readonly resourceType: "organization" | "account" | "invitation" | "role_assignment" | "project";
+  readonly resourceType: "organization" | "account" | "invitation" | "role_assignment" | "project" | "evidence";
   readonly resourceId: string;
   readonly action: AuditAction;
   readonly actorKind: AuditActorKind;

@@ -349,6 +349,14 @@ export class ProjectUseCases {
       domainValidation(() => assertSlice3OwnerOrganization(current.owner));
       assertProjectReadyForReview(current);
       assertProjectPolicy(input.actor, "project.submit", resourceFromDetails(current), this.clock.now());
+      const pendingEvidenceUploads = await transaction.countPendingEvidenceUploadsForProject({
+        tenantId: input.tenantId,
+        projectId: input.projectId,
+        now: this.clock.now()
+      });
+      if (pendingEvidenceUploads > 0) {
+        throw new ValidationError("Project cannot be submitted while evidence verification is in progress.", "PROJECT_EVIDENCE_UPLOADS_PENDING", 409);
+      }
 
       const submittedVersion = current.project.version;
       const request = await transaction.createApprovalRequest({

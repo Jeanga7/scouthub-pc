@@ -13,10 +13,15 @@ export type {
 export { FakeIdentityProvider } from "./ports/fake-identity-provider";
 export type {
   CreateUploadUrlInput,
-  ObjectHandle,
+  CreateDownloadUrlInput,
+  ObjectHead,
+  ObjectStorageErrorCode,
   ObjectStorage,
-  SignedUrl
+  PromoteObjectInput,
+  SignedObjectUrl
 } from "./ports/object-storage";
+export { ObjectStorageError } from "./ports/object-storage";
+export { FakeObjectStorage, type FakeStoredObject } from "./ports/fake-object-storage";
 export type {
   BaseRepository,
   TransactionContext
@@ -28,6 +33,18 @@ export type {
   OrganizationRepository,
   OrganizationTransaction
 } from "./ports/organization-repository";
+export type {
+  EvidenceCursor,
+  EvidenceDetails,
+  EvidenceInsert,
+  EvidenceListPage,
+  EvidenceProjectResource,
+  EvidenceRecord,
+  EvidenceRepository,
+  EvidenceTransaction,
+  MediaAssetInsert,
+  MediaAssetRecord
+} from "./ports/evidence-repository";
 export type {
   ApprovalDecisionRecord,
   ApprovalRequestRecord,
@@ -74,6 +91,12 @@ export {
   type EnsureProvisionedAccountInput,
   type InviteAdultUserInput
 } from "./identity/use-cases";
+export {
+  EvidenceUseCases,
+  type ConfirmEvidenceUploadInput,
+  type CreateEvidenceDownloadUrlInput,
+  type InitiateEvidenceUploadInput
+} from "./evidence/use-cases";
 export {
   ProjectUseCases,
   type AddProjectCommentInput,
