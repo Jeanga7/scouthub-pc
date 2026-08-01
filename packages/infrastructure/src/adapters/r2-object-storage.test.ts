@@ -102,6 +102,40 @@ describe("R2 object storage adapter", () => {
     expect(request.headers.get("range")).toBe("bytes=0-63");
   });
 
+  it("maps a body stream failure on a successful GET to storage unavailable", async () => {
+    const storage = createR2ObjectStorageAdapter({
+      accountId: "account",
+      bucketName: "bucket",
+      accessKeyId: "access",
+      secretAccessKey: "secret",
+      fetch: () => Promise.resolve(new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(Uint8Array.from([1, 2]));
+            controller.error(new Error("stream interrupted"));
+          }
+        }),
+        { status: 206 }
+      ))
+    });
+
+    const failure = await storage.readObjectForVerification({
+      key: "tmp/evidence/tenant/asset/random",
+      expectedEtag: "\"etag\"",
+      maxBytes: 64
+    }).then(() => null, (error: unknown) => error);
+
+    expect(failure).toMatchObject({
+      name: "ObjectStorageError",
+      code: "STORAGE_UNAVAILABLE"
+    });
+    const message = failure instanceof Error ? failure.message : "";
+    expect(message).not.toContain("secret");
+    expect(message).not.toContain("access");
+    expect(message).not.toContain("X-Amz");
+    expect(message).not.toContain("tmp/evidence");
+  });
+
   it("maps GET 412 and 500 to source changed or storage unavailable", async () => {
     const storage = createR2ObjectStorageAdapter({
       accountId: "account",

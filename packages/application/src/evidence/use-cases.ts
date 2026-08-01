@@ -435,16 +435,18 @@ export class EvidenceUseCases {
     input: { readonly tenantId: string; readonly projectId: string; readonly actor: ActorContext; readonly requestId?: string },
     asset: MediaAssetRecord
   ): Promise<never> {
-    if (isPrePromotionStorageUnavailableError(error)) {
+    // Only deterministic content/integrity verdicts may reject the upload.
+    // Anything else (signing, storage, interrupted body read, unexpected Web
+    // Crypto or technical failure) happened before CopyObject was attempted,
+    // so the asset returns to PENDING_UPLOAD and the client can retry instead
+    // of losing a file to a ScoutHub or R2 outage.
+    const rejectionCode = deterministicRejectionCodeFrom(error);
+    if (rejectionCode === null) {
       await this.resetVerificationClaim(input.tenantId, input.projectId, asset.id);
       throw new ApplicationError("Evidence storage unavailable.", "EVIDENCE_STORAGE_UNAVAILABLE", 503);
     }
-    const rejectionCode = rejectionCodeFrom(error);
     await this.rejectAsset(input, asset.id, rejectionCode);
     if (error instanceof ValidationError) {
-      throw error;
-    }
-    if (error instanceof ApplicationError) {
       throw error;
     }
     throw new ValidationError("Evidence upload verification failed.", rejectionCode, 422);
@@ -741,10 +743,23 @@ function rejectionCodeFrom(error: unknown): EvidenceRejectionCode {
   return "PROMOTION_FAILED";
 }
 
-function isPrePromotionStorageUnavailableError(error: unknown): boolean {
-  return (error instanceof ObjectStorageError &&
-    (error.code === "SIGNING_FAILED" || error.code === "STORAGE_UNAVAILABLE")) ||
-    (error instanceof ApplicationError && error.code === "EVIDENCE_STORAGE_UNAVAILABLE");
+const deterministicRejectionCodes: readonly EvidenceRejectionCode[] = [
+  "OBJECT_NOT_FOUND",
+  "SOURCE_CHANGED",
+  "SIZE_MISMATCH",
+  "CHECKSUM_MISMATCH",
+  "MAGIC_BYTES_MISMATCH",
+  "MIME_MISMATCH"
+];
+
+/**
+ * Returns a rejection code only when the failure is a deterministic verdict on
+ * the uploaded content itself. Technical failures return null so the caller can
+ * keep the upload retryable instead of marking the file permanently invalid.
+ */
+function deterministicRejectionCodeFrom(error: unknown): EvidenceRejectionCode | null {
+  const code = rejectionCodeFrom(error);
+  return deterministicRejectionCodes.includes(code) ? code : null;
 }
 
 function isEvidenceRejectionCode(code: string): code is EvidenceRejectionCode {

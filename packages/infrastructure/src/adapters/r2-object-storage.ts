@@ -102,7 +102,14 @@ export function createR2ObjectStorageAdapter(config: R2ObjectStorageConfig): Obj
       if (!response.ok) {
         throw storageUnavailable(`R2 verification read failed with status ${response.status}.`);
       }
-      return new Uint8Array(await response.arrayBuffer());
+      // The body can fail mid-stream after fetch() already resolved, so the
+      // read itself is wrapped: a truncated verification read is a transient
+      // storage failure, never evidence that the object is invalid.
+      try {
+        return new Uint8Array(await response.arrayBuffer());
+      } catch {
+        throw storageUnavailable("R2 verification body read failed.");
+      }
     },
 
     async promoteObject(input: PromoteObjectInput): Promise<void> {

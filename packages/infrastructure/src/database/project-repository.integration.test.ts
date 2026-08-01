@@ -918,7 +918,10 @@ function createEvidenceUseCases(storage: FakeObjectStorage, idValues: string[]):
   );
 }
 
-function makeIdGenerator(idValues: string[]): IdGenerator {
+// `fallbackPrefix` keeps generated ids unique across the generators used within
+// a single test: without it two generators would emit the same fallback uuids
+// and collide on audit_event's primary key.
+function makeIdGenerator(idValues: string[], fallbackPrefix = "eeeeeeee-eeee-4eee-8eee-"): IdGenerator {
   let auditCounter = 1;
   return {
     generate() {
@@ -928,7 +931,7 @@ function makeIdGenerator(idValues: string[]): IdGenerator {
       }
       const suffix = String(auditCounter).padStart(12, "0");
       auditCounter += 1;
-      return `eeeeeeee-eeee-4eee-8eee-${suffix}`;
+      return `${fallbackPrefix}${suffix}`;
     }
   };
 }
@@ -951,6 +954,19 @@ async function queryEvidenceCount(assetId: string): Promise<number> {
   try {
     const result = await pool.query<{ count: string }>(
       "SELECT count(*)::text AS count FROM evidence WHERE media_asset_id = $1",
+      [assetId]
+    );
+    return Number(result.rows[0]?.count ?? 0);
+  } finally {
+    await pool.end();
+  }
+}
+
+async function queryEvidenceRejectionAuditCount(assetId: string): Promise<number> {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  try {
+    const result = await pool.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM audit_event WHERE resource_id = $1 AND action = 'evidence.upload_rejected'",
       [assetId]
     );
     return Number(result.rows[0]?.count ?? 0);
@@ -1221,6 +1237,62 @@ describe("PgEvidenceRepository and EvidenceUseCases", () => {
     expect(storage.promoteCalls).toBe(0);
   });
 
+  it("returns pending again when the verification body read is interrupted", async () => {
+    const projectUseCases = createUseCases([ids.project]);
+    await projectUseCases.createProjectDraft({
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      ownerOrganizationId: ids.groupA,
+      title: "Jardin communautaire"
+    });
+
+    const storage = new FakeObjectStorage();
+    const useCases = createEvidenceUseCases(storage, [ids.projectTwo]);
+    const bytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47]);
+    const checksumHex = hashHex(bytes);
+    const initiated = await useCases.initiateEvidenceUpload({
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      filename: "proof.png",
+      mime: "image/png",
+      bytes: bytes.length,
+      sha256: checksumHex
+    });
+    const tempKey = initiated.asset.temporaryObjectKey;
+    if (tempKey === null) {
+      throw new Error("Expected temporary object key.");
+    }
+    storage.putObject(tempKey, {
+      contentType: "image/png",
+      byteSize: bytes.length,
+      checksumSha256Base64: Buffer.from(checksumHex, "hex").toString("base64"),
+      etag: "\"temp-etag\"",
+      bytes
+    });
+    // HEAD succeeds and the GET starts returning bytes, then the body fails.
+    storage.failTempReadBodyStream = true;
+
+    await expect(useCases.confirmEvidenceUpload({
+      actor: evidenceOwnerActor(),
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      assetId: initiated.asset.id,
+      type: "PHOTO",
+      title: "Photo synthetique"
+    })).rejects.toMatchObject({
+      code: "EVIDENCE_STORAGE_UNAVAILABLE",
+      status: 503
+    });
+
+    const asset = await queryMediaAsset(initiated.asset.id);
+    expect(asset?.upload_status).toBe("PENDING_UPLOAD");
+    expect(asset?.object_key).toBeNull();
+    expect(await queryEvidenceCount(initiated.asset.id)).toBe(0);
+    expect(storage.promoteCalls).toBe(0);
+    expect(await queryEvidenceRejectionAuditCount(initiated.asset.id)).toBe(0);
+  });
+
   it("returns pending again when CopyObject signing fails before the request is sent", async () => {
     const projectUseCases = createUseCases([ids.project]);
     await projectUseCases.createProjectDraft({
@@ -1387,7 +1459,10 @@ describe("PgEvidenceRepository and EvidenceUseCases", () => {
     const evidenceCount = await queryEvidenceCount(initiated.asset.id);
     expect(evidenceCount).toBe(1);
 
-    const sharedSubmitGenerator = makeIdGenerator(["abababab-abab-4aba-8aba-abababababab"]);
+    const sharedSubmitGenerator = makeIdGenerator(
+      ["abababab-abab-4aba-8aba-abababababab"],
+      "efefefef-efef-4efe-8efe-"
+    );
     const submitUseCases = new ProjectUseCases(
       createPgProjectRepository(databaseUrl),
       sharedSubmitGenerator,
@@ -1397,7 +1472,9 @@ describe("PgEvidenceRepository and EvidenceUseCases", () => {
       actor: evidenceOwnerActor(),
       tenantId: ids.tenant,
       ownerOrganizationId: ids.groupA,
-      title: "Projet concours"
+      title: "Projet concours",
+      problemStatement: "Un probleme synthetique a traiter.",
+      diagnostic: "Un diagnostic synthetique verifie."
     });
     const submitStorage = new FakeObjectStorage();
     const submitEvidenceUseCases = new EvidenceUseCases(
@@ -1452,18 +1529,30 @@ describe("PgEvidenceRepository and EvidenceUseCases", () => {
           expectedVersion: submitProject.project.version
         })
       ]);
-      expect(submitRace).toHaveLength(2);
-      const raceStatus = await queryProjectStatus(submitProject.project.id);
-      const raceEvidenceCount = await queryEvidenceCount(submittedAssetId);
-      const raceAsset = await queryMediaAsset(submittedAssetId);
-      if (raceEvidenceCount === 1) {
-        expect(raceStatus).toBe("DRAFT");
-        expect(raceAsset?.upload_status).toBe("VERIFIED");
-      } else {
-        expect(raceEvidenceCount).toBe(0);
-        expect(raceStatus).toBe("DRAFT");
-        expect(raceAsset?.upload_status).toBe("VERIFYING");
+      const [confirmOutcome, submitOutcome] = submitRace;
+      if (confirmOutcome === undefined || submitOutcome === undefined) {
+        throw new Error("Expected both race outcomes.");
       }
+      // The conservative strategy lets the Evidence confirmation win: whichever
+      // order the row locks are acquired in, submit observes the asset as
+      // PENDING_UPLOAD or VERIFYING and is rejected by the pending-evidence
+      // guard rather than by readiness or any other validation.
+      expect(confirmOutcome.status).toBe("fulfilled");
+      expect(submitOutcome.status).toBe("rejected");
+      if (submitOutcome.status !== "rejected") {
+        throw new Error("Expected submit to be rejected.");
+      }
+      expect(submitOutcome.reason).toMatchObject({
+        code: "PROJECT_EVIDENCE_UPLOADS_PENDING",
+        status: 409
+      });
+
+      expect(await queryProjectStatus(submitProject.project.id)).toBe("DRAFT");
+      expect(await queryEvidenceCount(submittedAssetId)).toBe(1);
+      const raceAsset = await queryMediaAsset(submittedAssetId);
+      expect(raceAsset?.upload_status).toBe("VERIFIED");
+      expect(submitStorage.readCalls).toBe(1);
+      expect(submitStorage.promoteCalls).toBe(1);
     } finally {
       await submitPool.end();
     }

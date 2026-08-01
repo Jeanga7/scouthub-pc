@@ -30,6 +30,7 @@ export class FakeObjectStorage implements ObjectStorage {
   downloadSignCalls = 0;
   failTempHead = false;
   failTempRead = false;
+  failTempReadBodyStream = false;
   failCopyBeforeRequest = false;
   failCopyAmbiguous = false;
   failPermanentHeadSigning = false;
@@ -107,6 +108,11 @@ export class FakeObjectStorage implements ObjectStorage {
     this.readCalls += 1;
     if (this.isTemporaryKey(input.key) && this.failTempRead) {
       return Promise.reject(new ObjectStorageError("fake temporary read signing failure", "SIGNING_FAILED"));
+    }
+    if (this.isTemporaryKey(input.key) && this.failTempReadBodyStream) {
+      // The GET succeeded and bytes started flowing; the body then failed
+      // mid-stream and surfaces as an unclassified technical error.
+      return Promise.reject(new Error("fake temporary read body stream interrupted"));
     }
     if (this.failRead) {
       return Promise.reject(new ObjectStorageError("fake read failure", "STORAGE_UNAVAILABLE"));
