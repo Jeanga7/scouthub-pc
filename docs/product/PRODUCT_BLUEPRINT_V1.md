@@ -30,7 +30,7 @@ Un Chef de Groupe peut affecter librement les responsables de son groupe. Au-des
 
 ## 5. Autorisation
 
-ScoutHub applique un RBAC scopté par périmètre : **fonction active → permissions → scope → descendants autorisés**. Un Chef de Groupe gère son groupe, ses unités et annexes, ses membres, activités, camps et projets. Un Commissaire de District voit son district et ses groupes, consulte les statistiques, coordonne le calendrier et instruit les dossiers de camp. La Région consolide, supervise, communique et administre la structure.
+ScoutHub applique un RBAC scopé par périmètre : **fonction active → permissions → scope → descendants autorisés**. Un Chef de Groupe gère son groupe, ses unités et annexes, ses membres, activités, camps et projets. Un Commissaire de District voit son district et ses groupes, consulte les statistiques, coordonne le calendrier et instruit les dossiers de camp. La Région consolide, supervise, communique et administre la structure.
 
 Masquer un lien dans l’UI n’est jamais une autorisation. Toute règle critique reste vérifiée côté serveur avec rôle, scope, relation, état de la ressource et sensibilité des données.
 
@@ -103,6 +103,6 @@ Chaque slice apporte une interaction visible ; l’infrastructure ne précède p
 
 ## 16. Écarts avec l’existant et migration
 
-L’existant fournit déjà Organization hiérarchique, Account/Person, RoleAssignment scopté, Project, Review, Evidence, Outbox et providers. On les conserve comme primitives compatibles. `Appointment/Position`, Scout ID, Campaign, AdministrativeCase, calendrier, communications, projections publiques et partenaires sont des extensions graduelles. RoleAssignment reste l’autorité pendant la transition ; il ne sera pas remplacé en big-bang.
+L’existant fournit déjà Organization hiérarchique, Account/Person, RoleAssignment scopé, Project, Review, Evidence, Outbox et providers. On les conserve comme primitives compatibles. `Appointment/Position`, Scout ID, Campaign, AdministrativeCase, calendrier, communications, projections publiques et partenaires sont des extensions graduelles. RoleAssignment reste l’autorité pendant la transition ; il ne sera pas remplacé en big-bang.
 
 Les migrations suivront expand → backfill contrôlé → double lecture/écriture si nécessaire → contract. Les données actuelles restent lisibles ; chaque évolution sera précédée d’un ADR et de tests d’autorisation. Aucun changement DB n’est requis par cette PR.
