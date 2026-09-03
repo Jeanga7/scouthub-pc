@@ -5,11 +5,13 @@ import type { OrganizationResponse } from "@scouthub/contracts";
 
 interface Props {
   readonly initialTenantId: string;
+  readonly initialScopeOrganizationId: string;
   readonly initialOrganizations: OrganizationResponse[];
 }
 
 export function OrganizationsConsole({
   initialTenantId,
+  initialScopeOrganizationId,
   initialOrganizations
 }: Props) {
   const [tenantId, setTenantId] = useState(initialTenantId);
@@ -21,14 +23,14 @@ export function OrganizationsConsole({
       return;
     }
     const response = await fetch(
-      `/api/v1/organizations/${nextTenantId}/descendants?tenantId=${nextTenantId}`
+      `/api/v1/organizations/${initialScopeOrganizationId}/descendants?tenantId=${nextTenantId}`
     );
     const body = (await response.json()) as { data?: OrganizationResponse[]; detail?: string };
     if (!response.ok || body.data === undefined) {
       setMessage(body.detail ?? "Unable to load organizations.");
       return;
     }
-    const root = await fetch(`/api/v1/organizations/${nextTenantId}?tenantId=${nextTenantId}`);
+    const root = await fetch(`/api/v1/organizations/${initialScopeOrganizationId}?tenantId=${nextTenantId}`);
     const rootBody = (await root.json()) as { data?: OrganizationResponse };
     setOrganizations(rootBody.data === undefined ? body.data : [rootBody.data, ...body.data]);
     setMessage("Loaded");
@@ -64,8 +66,8 @@ export function OrganizationsConsole({
   return (
     <div className="org-console">
       <section className="panel">
-        <p className="eyebrow">Dev admin local</p>
-        <h1>Organizations</h1>
+        <p className="eyebrow">Structure régionale</p>
+        <h1>Organisations</h1>
         <p>{message}</p>
       </section>
 

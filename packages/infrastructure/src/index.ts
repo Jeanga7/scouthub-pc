@@ -7,6 +7,11 @@ export {
   type ClerkSessionReader
 } from "./adapters/clerk-identity-provider";
 export {
+  createLocalIdentityProviderAdapter,
+  LOCAL_PERSONA_COOKIE,
+  type LocalIdentityPersona
+} from "./adapters/local-identity-provider";
+export {
   createR2ObjectStorageAdapter,
   type R2ObjectStorageConfig
 } from "./adapters/r2-object-storage";

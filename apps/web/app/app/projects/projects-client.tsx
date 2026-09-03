@@ -54,7 +54,7 @@ export function ProjectsListClient() {
       );
       setProjects((current) => cursor === undefined ? response.projects : [...current, ...response.projects]);
       setNextCursor(response.nextCursor);
-      setMessage(response.projects.length === 0 ? "Aucun brouillon accessible." : "");
+      setMessage(response.projects.length === 0 ? "Aucun projet accessible." : "");
     } catch {
       setMessage("Impossible de charger les projets.");
     }
@@ -69,7 +69,7 @@ export function ProjectsListClient() {
       <div className="project-header">
         <div>
           <p className="eyebrow">Projects & Impact</p>
-          <h1>Projets brouillons</h1>
+          <h1>Projets</h1>
         </div>
         {tenantId.length > 0 ? <a className="button-link" href="/app/projects/new">Nouveau projet</a> : null}
       </div>
@@ -291,6 +291,7 @@ export function ProjectOverviewClient({ projectId, initialTenantId }: {
       {message.length > 0 ? <p role="status">{message}</p> : null}
       {project !== null ? (
         <>
+          <ProjectNavigation projectId={project.id} tenantId={project.tenantId} />
           <p className="eyebrow">{project.status}</p>
           <h1>{project.title}</h1>
           <p>{project.code} - {project.ownerOrganization.name}</p>
@@ -364,6 +365,7 @@ export function ProjectReviewsClient({ projectId, initialTenantId }: {
 
   return (
     <section className="panel project-console">
+      <ProjectNavigation projectId={projectId} tenantId={initialTenantId} />
       <p className="eyebrow">Revue</p>
       <h1>Historique du projet</h1>
       {message.length > 0 ? <p role="status">{message}</p> : null}
@@ -441,6 +443,7 @@ export function ProjectEvidenceClient({ projectId, initialTenantId }: {
 
   return (
     <section className="panel project-console">
+      <ProjectNavigation projectId={projectId} tenantId={initialTenantId} />
       <p className="eyebrow">Preuves</p>
       <h1>Preuves du projet</h1>
       {message.length > 0 ? <p role="status">{message}</p> : null}
@@ -470,6 +473,15 @@ export function ProjectEvidenceClient({ projectId, initialTenantId }: {
       ) : null}
     </section>
   );
+}
+
+function ProjectNavigation({ projectId, tenantId }: { readonly projectId: string; readonly tenantId: string }) {
+  const suffix = `?tenantId=${encodeURIComponent(tenantId)}`;
+  return <nav className="project-subnav" aria-label="Sections du projet">
+    <a href={`/app/projects/${projectId}/overview${suffix}`}>Vue générale</a>
+    <a href={`/app/projects/${projectId}/evidence${suffix}`}>Preuves</a>
+    <a href={`/app/projects/${projectId}/reviews${suffix}`}>Validation</a>
+  </nav>;
 }
 
 function EvidenceUploader({ projectId, tenantId, onUploaded }: {
