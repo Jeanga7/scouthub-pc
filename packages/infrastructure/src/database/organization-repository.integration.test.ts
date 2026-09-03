@@ -17,6 +17,7 @@ const ids = {
   unitOne: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa6",
   groupDirect: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa7",
   betaRegion: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2",
+  betaDistrict: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb4",
   betaGroup: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3"
 };
 
@@ -40,6 +41,7 @@ describe("PgOrganizationRepository", () => {
       ids.groupDirect,
       ids.beta,
       ids.betaRegion,
+      ids.betaDistrict,
       ids.betaGroup
     ]);
 
@@ -77,7 +79,7 @@ describe("PgOrganizationRepository", () => {
     });
     const groupUnderRegion = await useCases.createOrganization({
       tenantId: alpha.tenantId,
-      parentId: region.id,
+      parentId: district.id,
       type: "GROUP",
       name: "Groupe Teranga",
       code: "teranga"
@@ -91,9 +93,16 @@ describe("PgOrganizationRepository", () => {
       name: "Region Rivage",
       code: "horizon"
     });
-    await useCases.createOrganization({
+    const betaDistrict = await useCases.createOrganization({
       tenantId: beta.tenantId,
       parentId: betaRegion.id,
+      type: "DISTRICT",
+      name: "District Rivage",
+      code: "district-rivage"
+    });
+    await useCases.createOrganization({
+      tenantId: beta.tenantId,
+      parentId: betaDistrict.id,
       type: "GROUP",
       name: "Groupe Nebuleuse",
       code: "nebuleuse"
@@ -121,10 +130,7 @@ describe("PgOrganizationRepository", () => {
     ).rejects.toThrow("Parent organization not found");
 
     const alphaChildren = await useCases.listChildren(alpha.tenantId, region.id);
-    expect(alphaChildren.map((item) => item.id)).toEqual([
-      district.id,
-      groupUnderRegion.id
-    ]);
+    expect(alphaChildren.map((item) => item.id)).toEqual([district.id]);
     const ancestors = await useCases.listAncestors(alpha.tenantId, unit.id);
     expect(ancestors.map((item) => item.id)).toEqual([
       alpha.id,
@@ -134,7 +140,7 @@ describe("PgOrganizationRepository", () => {
     ]);
     const descendants = await useCases.listDescendants(alpha.tenantId, region.id);
     expect(descendants.map((item) => item.id)).toContain(unit.id);
-    expect(groupUnderRegion.depth).toBe(2);
+    expect(groupUnderRegion.depth).toBe(3);
     expect(unit.path).toBe(
       `/${alpha.id}/${region.id}/${district.id}/${groupUnderDistrict.id}/${unit.id}/`
     );
@@ -405,7 +411,7 @@ async function createAlphaTree(): Promise<OrganizationUseCases> {
   });
   await useCases.createOrganization({
     tenantId: ids.alpha,
-    parentId: ids.region,
+    parentId: ids.districtA,
     type: "GROUP",
     name: "Group Direct",
     code: "group-direct"

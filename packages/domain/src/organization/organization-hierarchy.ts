@@ -3,7 +3,6 @@ import type { OrganizationType } from "./organization-type";
 const allowedParentChild = new Set<string>([
   "NSO:REGION",
   "REGION:DISTRICT",
-  "REGION:GROUP",
   "DISTRICT:GROUP",
   "GROUP:ANNEX",
   "GROUP:UNIT",

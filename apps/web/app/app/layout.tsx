@@ -6,6 +6,7 @@ import { isRoleAssignmentActive } from "@scouthub/domain";
 import { BottomNav, Sidebar } from "@scouthub/ui";
 import { requireActor } from "@/identity/http";
 import { isLocalIdentityMode } from "@/identity/local-mode";
+import { MobileActions } from "./mobile-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +27,7 @@ export default async function ConsoleLayout({ children }: { readonly children: R
     .flatMap((assignment) => assignment.permissions));
   return (
     <div className="console-shell">
-      <Sidebar><Link className="brand" href="/app"><span className="brand-mark">S</span> ScoutHub-PC</Link><span className="nav-label">Aujourd’hui</span><Link href="/app">Tableau de bord</Link><span className="nav-label">Pilotage</span>{permissions.has("organization.read") ? <Link href={"/app/structure" as never}>Structure</Link> : null}{permissions.has("project.read") ? <Link href="/app/projects">Projets</Link> : null}<span className="nav-label">Administration</span>{permissions.has("role.read") ? <Link href="/app/admin/access">Accès</Link> : null}</Sidebar>
+      <Sidebar><Link className="brand" href="/app"><span className="brand-mark">S</span> ScoutHub-PC</Link><span className="nav-label">Aujourd’hui</span><Link href="/app">Tableau de bord</Link><span className="nav-label">Pilotage</span>{permissions.has("organization.read") ? <Link href="/app/structure">Structure</Link> : null}{permissions.has("project.read") ? <Link href="/app/projects">Projets</Link> : null}<span className="nav-label">Administration</span>{permissions.has("role.read") ? <Link href="/app/admin/access">Accès</Link> : null}</Sidebar>
       <header className="console-header">
         <div className="topbar-context"><span className="brand-mark">S</span><span>ScoutHub-PC</span></div>
         <div className="account-area">
@@ -35,7 +36,7 @@ export default async function ConsoleLayout({ children }: { readonly children: R
         </div>
       </header>
       {children}
-      <BottomNav><Link href="/app">Aujourd’hui</Link>{permissions.has("organization.read") ? <Link href={"/app/structure" as never}>Structure</Link> : null}<Link className="bottom-action" href={(permissions.has("project.create") ? "/app/projects/new" : "/app/structure") as never}>+</Link>{permissions.has("project.read") ? <Link href="/app/projects">Projets</Link> : null}<Link href={isLocalIdentityMode(process.env) ? "/local-demo" : "/app"}>Plus</Link></BottomNav>
+      <BottomNav><Link href="/app">Aujourd’hui</Link>{permissions.has("organization.read") ? <Link href="/app/structure">Structure</Link> : null}<MobileActions canCreateProject={permissions.has("project.create")} canCreateOrganization={permissions.has("organization.create")} />{permissions.has("project.read") ? <Link href="/app/projects">Projets</Link> : null}<Link href={isLocalIdentityMode(process.env) ? "/local-demo" : "/app"}>Plus</Link></BottomNav>
     </div>
   );
 }
