@@ -62,3 +62,20 @@ export interface OutboxTransaction {
 export interface OutboxRepository {
   transaction<TResult>(handler: (transaction: OutboxTransaction) => Promise<TResult>): Promise<TResult>;
 }
+
+export function assertValidClaimOutboxBatchInput(input: ClaimOutboxBatchInput): void {
+  if (!Number.isInteger(input.limit) || input.limit <= 0) {
+    throw new RangeError("Outbox claim limit must be a positive integer.");
+  }
+  assertValidOutboxDate(input.now);
+}
+
+export function assertValidSettleOutboxEventInput(input: SettleOutboxEventInput): void {
+  assertValidOutboxDate(input.now);
+}
+
+function assertValidOutboxDate(value: Date): void {
+  if (!(value instanceof Date) || !Number.isFinite(value.getTime())) {
+    throw new RangeError("Outbox date must be valid.");
+  }
+}

@@ -6,6 +6,10 @@ import type {
   OutboxTransaction,
   SettleOutboxEventInput
 } from "./outbox-repository";
+import {
+  assertValidClaimOutboxBatchInput,
+  assertValidSettleOutboxEventInput
+} from "./outbox-repository";
 
 /**
  * In-memory OutboxRepository used to exercise the port contract without a
@@ -73,6 +77,7 @@ export class InMemoryOutboxRepository implements OutboxRepository, OutboxTransac
   }
 
   claimBatchForProcessing(input: ClaimOutboxBatchInput): Promise<readonly OutboxRecord[]> {
+    assertValidClaimOutboxBatchInput(input);
     const claimed: OutboxRecord[] = [];
     for (const record of this.ordered()) {
       if (claimed.length >= input.limit) {
@@ -87,6 +92,7 @@ export class InMemoryOutboxRepository implements OutboxRepository, OutboxTransac
   }
 
   markSent(input: SettleOutboxEventInput): Promise<OutboxRecord | null> {
+    assertValidSettleOutboxEventInput(input);
     return Promise.resolve(this.settle(input, "SENT", (record) => ({
       ...record,
       status: "SENT",
@@ -95,6 +101,7 @@ export class InMemoryOutboxRepository implements OutboxRepository, OutboxTransac
   }
 
   markFailed(input: SettleOutboxEventInput): Promise<OutboxRecord | null> {
+    assertValidSettleOutboxEventInput(input);
     return Promise.resolve(this.settle(input, "FAILED", (record) => ({
       ...record,
       status: "FAILED",
@@ -104,6 +111,7 @@ export class InMemoryOutboxRepository implements OutboxRepository, OutboxTransac
   }
 
   reschedule(input: SettleOutboxEventInput): Promise<OutboxRecord | null> {
+    assertValidSettleOutboxEventInput(input);
     return Promise.resolve(this.settle(input, "PENDING", (record) => ({
       ...record,
       status: "PENDING",
