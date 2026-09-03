@@ -1,4 +1,5 @@
 import type {
+  DomainEvent,
   OrganizationType,
   Person,
   Project,
@@ -7,6 +8,7 @@ import type {
   ProjectVisibility
 } from "@scouthub/domain";
 import type { AuditEventInput } from "../organization/audit";
+import type { OutboxRecord } from "./outbox-repository";
 
 export interface ProjectOwnerResource {
   readonly tenantId: string;
@@ -281,6 +283,16 @@ export interface ProjectTransaction {
   }): Promise<ReviewQueuePage>;
   listProjectReviewHistory(tenantId: string, projectId: string): Promise<ProjectReviewHistory>;
   appendAuditEvent(input: AuditEventInput): Promise<void>;
+
+  /**
+   * Records a domain event in the outbox as part of *this* transaction.
+   *
+   * Deliberately hung off the transaction rather than reached through
+   * `OutboxRepository`, which opens a unit of work of its own: an event written
+   * on a second connection could commit while the project change rolls back, or
+   * the reverse. Same reasoning as `appendAuditEvent`, and the same shape.
+   */
+  appendOutboxEvent(event: DomainEvent): Promise<OutboxRecord>;
 }
 
 export interface ProjectRepository {

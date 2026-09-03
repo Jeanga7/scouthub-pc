@@ -13,6 +13,15 @@ export {
   serializeEventPayload
 } from "./events/domain-event";
 export { EventDomainError } from "./events/event-errors";
+export type {
+  ProjectSubmittedForReviewEvent,
+  ProjectSubmittedForReviewPayload
+} from "./events/project-events";
+export {
+  createProjectSubmittedForReviewEvent,
+  projectAggregateType,
+  projectSubmittedForReviewEventType
+} from "./events/project-events";
 export type { OutboxEventStatus } from "./events/outbox-event-status";
 export { canTransitionOutboxStatus, outboxEventStatuses } from "./events/outbox-event-status";
 

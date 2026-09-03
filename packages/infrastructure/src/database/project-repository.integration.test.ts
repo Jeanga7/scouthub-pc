@@ -1,8 +1,14 @@
 import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import pg from "pg";
-import type { Pool } from "pg";
-import type { ActorContext, EvidenceRepository, EvidenceTransaction } from "@scouthub/application";
+import type { Pool, QueryResultRow } from "pg";
+import type {
+  ActorContext,
+  EvidenceRepository,
+  EvidenceTransaction,
+  ProjectRepository,
+  ProjectTransaction
+} from "@scouthub/application";
 import { EvidenceUseCases, ProjectUseCases, type IdGenerator } from "@scouthub/application";
 import { FakeObjectStorage } from "@scouthub/application";
 import { evidenceDownloadUrlTtlSeconds } from "@scouthub/domain";
@@ -38,7 +44,7 @@ describe("PgProjectRepository", () => {
   beforeEach(async () => {
     const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
     try {
-      await pool.query("TRUNCATE audit_event, evidence, media_asset, approval_decision, state_transition, project_comment, approval_request, project, role_assignment, account_invitation, account_person_link, account, person, organization RESTART IDENTITY CASCADE");
+      await pool.query("TRUNCATE outbox_events, audit_event, evidence, media_asset, approval_decision, state_transition, project_comment, approval_request, project, role_assignment, account_invitation, account_person_link, account, person, organization RESTART IDENTITY CASCADE");
       await seedBase(pool);
     } finally {
       await pool.end();
@@ -844,6 +850,149 @@ describe("PgProjectRepository", () => {
       await pool.end();
     }
   });
+
+  it("records project.submitted_for_review in the outbox when a submit commits", async () => {
+    const useCases = createUseCases([ids.project, "abababab-abab-4aba-8aba-abababababab"]);
+    const owner = projectOwnerActor();
+    const created = await useCases.createProjectDraft({
+      actor: owner,
+      tenantId: ids.tenant,
+      ownerOrganizationId: ids.groupA,
+      title: "Nettoyage plage",
+      problemStatement: "Dechets sur la plage.",
+      diagnostic: "Diagnostic environnemental."
+    });
+    expect(await queryOutboxEvents()).toHaveLength(0);
+
+    const submitted = await useCases.submitProjectForReview({
+      actor: owner,
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      expectedVersion: created.project.version,
+      requestId: "submit_outbox"
+    });
+
+    expect(submitted.project.project.status).toBe("READY_FOR_REVIEW");
+    expect(await queryProjectStatus(ids.project)).toBe("READY_FOR_REVIEW");
+
+    const events = await queryOutboxEvents();
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    if (event === undefined) {
+      throw new Error("Expected an outbox event.");
+    }
+    expect(event.event_type).toBe("project.submitted_for_review");
+    expect(event.payload).toEqual({
+      projectId: ids.project,
+      actorId: ids.account
+    });
+    // A freshly appended event is unclaimed work.
+    expect(event.status).toBe("PENDING");
+    expect(Number(event.attempts)).toBe(0);
+    expect(event.processed_at).toBeNull();
+  });
+
+  it("scopes the submitted event to the right tenant and aggregate", async () => {
+    const useCases = createUseCases([ids.project, "acacacac-acac-4aca-8aca-acacacacacac"]);
+    const owner = projectOwnerActor();
+    const created = await useCases.createProjectDraft({
+      actor: owner,
+      tenantId: ids.tenant,
+      ownerOrganizationId: ids.groupA,
+      title: "Nettoyage plage",
+      problemStatement: "Dechets sur la plage.",
+      diagnostic: "Diagnostic environnemental."
+    });
+    await useCases.submitProjectForReview({
+      actor: owner,
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      expectedVersion: created.project.version
+    });
+
+    const [event] = await queryOutboxEvents(ids.project);
+    if (event === undefined) {
+      throw new Error("Expected an outbox event.");
+    }
+    expect(event.tenant_id).toBe(ids.tenant);
+    expect(event.aggregate_type).toBe("project");
+    expect(event.aggregate_id).toBe(ids.project);
+    // The aggregate is the project itself, not the approval request or the actor.
+    expect(event.aggregate_id).not.toBe(ids.account);
+    // Nothing was written under another tenant.
+    const all = await queryOutboxEvents();
+    expect(all.filter((row) => row.tenant_id !== ids.tenant)).toHaveLength(0);
+  });
+
+  it("rolls the whole submit back when the outbox insert fails", async () => {
+    const owner = projectOwnerActor();
+    const seedUseCases = createUseCases([ids.project]);
+    const created = await seedUseCases.createProjectDraft({
+      actor: owner,
+      tenantId: ids.tenant,
+      ownerOrganizationId: ids.groupA,
+      title: "Nettoyage plage",
+      problemStatement: "Dechets sur la plage.",
+      diagnostic: "Diagnostic environnemental."
+    });
+
+    // Fails the outbox append only, leaving every earlier statement in the
+    // transaction already executed. If the boundary were wrong, the project
+    // would be READY_FOR_REVIEW with no event.
+    const failingRepository: ProjectRepository = {
+      transaction<TResult>(handler: (transaction: ProjectTransaction) => Promise<TResult>): Promise<TResult> {
+        return createPgProjectRepository(databaseUrl).transaction((transaction: ProjectTransaction) => {
+          const failing = Object.create(transaction) as ProjectTransaction;
+          failing.appendOutboxEvent = () => Promise.reject(new Error("simulated outbox insert failure"));
+          return handler(failing);
+        });
+      }
+    };
+    const useCases = new ProjectUseCases(
+      failingRepository,
+      makeIdGenerator(["adadadad-adad-4ada-8ada-adadadadadad"], "afafafaf-afaf-4afa-8afa-"),
+      { now: () => now }
+    );
+
+    await expect(useCases.submitProjectForReview({
+      actor: owner,
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      expectedVersion: created.project.version
+    })).rejects.toThrow("simulated outbox insert failure");
+
+    // Old state, and no partial write anywhere in the unit of work.
+    expect(await queryProjectStatus(ids.project)).toBe("DRAFT");
+    expect(await queryOutboxEvents()).toHaveLength(0);
+    expect(await queryApprovalRequestCount(ids.project)).toBe(0);
+
+    const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+    try {
+      const transitions = await pool.query<{ count: string }>(
+        "SELECT count(*)::text AS count FROM state_transition WHERE entity_id = $1",
+        [ids.project]
+      );
+      const audits = await pool.query<{ count: string }>(
+        "SELECT count(*)::text AS count FROM audit_event WHERE resource_id = $1 AND action = 'project.submitted_for_review'",
+        [ids.project]
+      );
+      expect(Number(transitions.rows[0]?.count)).toBe(0);
+      expect(Number(audits.rows[0]?.count)).toBe(0);
+    } finally {
+      await pool.end();
+    }
+
+    // The project is untouched, so a later submit still works and emits once.
+    const retry = createUseCases(["aeaeaeae-aeae-4aea-8aea-aeaeaeaeaeae"]);
+    await retry.submitProjectForReview({
+      actor: owner,
+      tenantId: ids.tenant,
+      projectId: ids.project,
+      expectedVersion: created.project.version
+    });
+    expect(await queryProjectStatus(ids.project)).toBe("READY_FOR_REVIEW");
+    expect(await queryOutboxEvents()).toHaveLength(1);
+  });
 });
 
 async function seedBase(pool: Pool): Promise<void> {
@@ -1041,6 +1190,33 @@ async function queryEvidenceRejectionAuditCount(assetId: string): Promise<number
   }
 }
 
+type OutboxRow = QueryResultRow & {
+  id: string;
+  tenant_id: string;
+  aggregate_type: string;
+  aggregate_id: string;
+  event_type: string;
+  payload: Record<string, unknown>;
+  status: string;
+  attempts: number;
+  processed_at: Date | null;
+};
+
+async function queryOutboxEvents(projectId?: string): Promise<OutboxRow[]> {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  try {
+    const result = projectId === undefined
+      ? await pool.query<OutboxRow>("SELECT * FROM outbox_events ORDER BY created_at, id")
+      : await pool.query<OutboxRow>(
+          "SELECT * FROM outbox_events WHERE aggregate_id = $1 ORDER BY created_at, id",
+          [projectId]
+        );
+    return result.rows;
+  } finally {
+    await pool.end();
+  }
+}
+
 async function queryApprovalRequestCount(projectId: string): Promise<number> {
   const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
   try {
@@ -1170,7 +1346,7 @@ describe("PgEvidenceRepository and EvidenceUseCases", () => {
   beforeEach(async () => {
     const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
     try {
-      await pool.query("TRUNCATE audit_event, evidence, media_asset, approval_decision, state_transition, project_comment, approval_request, project, role_assignment, account_invitation, account_person_link, account, person, organization RESTART IDENTITY CASCADE");
+      await pool.query("TRUNCATE outbox_events, audit_event, evidence, media_asset, approval_decision, state_transition, project_comment, approval_request, project, role_assignment, account_invitation, account_person_link, account, person, organization RESTART IDENTITY CASCADE");
       await seedBase(pool);
     } finally {
       await pool.end();
