@@ -4,11 +4,16 @@ const alpha = {
   nso: "11111111-1111-4111-8111-111111111111",
   region: "11111111-1111-4111-8111-111111111112",
   district: "11111111-1111-4111-8111-111111111113",
+  districtSouth: "11111111-1111-4111-8111-111111111119",
   groupBaobab: "11111111-1111-4111-8111-111111111114",
   unitLouveteaux: "11111111-1111-4111-8111-111111111115",
   unitEclaireurs: "11111111-1111-4111-8111-111111111116",
   groupTeranga: "11111111-1111-4111-8111-111111111117",
-  unitRoutiers: "11111111-1111-4111-8111-111111111118"
+  unitRoutiers: "11111111-1111-4111-8111-111111111118",
+  annexBaobab: "11111111-1111-4111-8111-111111111120",
+  unitJaune: "11111111-1111-4111-8111-111111111121",
+  unitVerte: "11111111-1111-4111-8111-111111111122",
+  unitRouge: "11111111-1111-4111-8111-111111111123"
 };
 
 const beta = {
@@ -42,9 +47,14 @@ const rows = [
   [alpha.nso, alpha.nso, null, "NSO", "Federation Scoute Alpha", "ALPHA", `/${alpha.nso}/`, 0],
   [alpha.region, alpha.nso, alpha.nso, "REGION", "Region Horizon", "HORIZON", `/${alpha.nso}/${alpha.region}/`, 1],
   [alpha.district, alpha.nso, alpha.region, "DISTRICT", "District Nord", "NORD", `/${alpha.nso}/${alpha.region}/${alpha.district}/`, 2],
+  [alpha.districtSouth, alpha.nso, alpha.region, "DISTRICT", "District Sud", "SUD", `/${alpha.nso}/${alpha.region}/${alpha.districtSouth}/`, 2],
   [alpha.groupBaobab, alpha.nso, alpha.district, "GROUP", "Groupe Baobab", "BAOBAB", `/${alpha.nso}/${alpha.region}/${alpha.district}/${alpha.groupBaobab}/`, 3],
   [alpha.unitLouveteaux, alpha.nso, alpha.groupBaobab, "UNIT", "Unite Louveteaux", "LOUVETEAUX", `/${alpha.nso}/${alpha.region}/${alpha.district}/${alpha.groupBaobab}/${alpha.unitLouveteaux}/`, 4],
   [alpha.unitEclaireurs, alpha.nso, alpha.groupBaobab, "UNIT", "Unite Eclaireurs", "ECLAIREURS", `/${alpha.nso}/${alpha.region}/${alpha.district}/${alpha.groupBaobab}/${alpha.unitEclaireurs}/`, 4],
+  [alpha.annexBaobab, alpha.nso, alpha.groupBaobab, "ANNEX", "Annexe Baobab Littoral", "BAOBAB-LITTORAL", `/${alpha.nso}/${alpha.region}/${alpha.district}/${alpha.groupBaobab}/${alpha.annexBaobab}/`, 4],
+  [alpha.unitJaune, alpha.nso, alpha.annexBaobab, "UNIT", "Unité Jaune", "JAUNE", `/${alpha.nso}/${alpha.region}/${alpha.district}/${alpha.groupBaobab}/${alpha.annexBaobab}/${alpha.unitJaune}/`, 5],
+  [alpha.unitVerte, alpha.nso, alpha.annexBaobab, "UNIT", "Unité Verte", "VERTE", `/${alpha.nso}/${alpha.region}/${alpha.district}/${alpha.groupBaobab}/${alpha.annexBaobab}/${alpha.unitVerte}/`, 5],
+  [alpha.unitRouge, alpha.nso, alpha.annexBaobab, "UNIT", "Unité Rouge", "ROUGE", `/${alpha.nso}/${alpha.region}/${alpha.district}/${alpha.groupBaobab}/${alpha.annexBaobab}/${alpha.unitRouge}/`, 5],
   [alpha.groupTeranga, alpha.nso, alpha.region, "GROUP", "Groupe Teranga", "TERANGA", `/${alpha.nso}/${alpha.region}/${alpha.groupTeranga}/`, 2],
   [alpha.unitRoutiers, alpha.nso, alpha.groupTeranga, "UNIT", "Unite Routiers", "ROUTIERS", `/${alpha.nso}/${alpha.region}/${alpha.groupTeranga}/${alpha.unitRoutiers}/`, 3],
   [beta.nso, beta.nso, null, "NSO", "Association Scoute Beta", "BETA", `/${beta.nso}/`, 0],

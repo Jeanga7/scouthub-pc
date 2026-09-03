@@ -3,6 +3,7 @@ export const organizationTypes = [
   "REGION",
   "DISTRICT",
   "GROUP",
+  "ANNEX",
   "UNIT",
   "TEAM"
 ] as const;
@@ -14,6 +15,7 @@ export const slice1CreatableOrganizationTypes = [
   "REGION",
   "DISTRICT",
   "GROUP",
+  "ANNEX",
   "UNIT"
 ] as const satisfies readonly OrganizationType[];
 

@@ -15,6 +15,7 @@ export const organizationTypeSchema = z.enum([
   "REGION",
   "DISTRICT",
   "GROUP",
+  "ANNEX",
   "UNIT",
   "TEAM"
 ]);

@@ -67,6 +67,7 @@ export const organizationType = pgEnum("organization_type", [
   "REGION",
   "DISTRICT",
   "GROUP",
+  "ANNEX",
   "UNIT",
   "TEAM"
 ]);

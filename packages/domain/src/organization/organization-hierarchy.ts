@@ -5,7 +5,9 @@ const allowedParentChild = new Set<string>([
   "REGION:DISTRICT",
   "REGION:GROUP",
   "DISTRICT:GROUP",
-  "GROUP:UNIT"
+  "GROUP:ANNEX",
+  "GROUP:UNIT",
+  "ANNEX:UNIT"
 ]);
 
 export function isAllowedParentChild(
@@ -14,6 +16,9 @@ export function isAllowedParentChild(
 ): boolean {
   return allowedParentChild.has(`${parentType}:${childType}`);
 }
+
+/** V1 vocabulary for the server-side organization containment policy. */
+export const canContain = isAllowedParentChild;
 
 export function buildOrganizationPath(
   parentPath: string | null,
