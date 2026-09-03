@@ -36,7 +36,7 @@ export default async function StructureDetailPage({ params }: { readonly params:
             <span>Code</span><strong>{organization.code}</strong>
             <span>Statut</span><StatusBadge status={organization.status} />
             <span>Parent</span>
-            <Link href={(organization.parentId ? `/app/structure/${organization.parentId}` : "/app/structure") as never}>{ancestors.at(-1)?.name ?? "Région"}</Link>
+            <Link href={organization.parentId ? `/app/structure/${organization.parentId}` : "/app/structure"}>{ancestors.at(-1)?.name ?? "Région"}</Link>
           </div>
           <section>
             <h2>Enfants</h2>
