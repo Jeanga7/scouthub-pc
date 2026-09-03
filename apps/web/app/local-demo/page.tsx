@@ -5,7 +5,8 @@ import { isLocalIdentityMode } from "@/identity/local-mode";
 
 export default function LocalDemoPage() {
   if (!isLocalIdentityMode(process.env)) {
-    redirect("/sign-in/");
+    const signInPath = "/sign-in/";
+    redirect(signInPath);
   }
   return (
     <main className="page demo-login">

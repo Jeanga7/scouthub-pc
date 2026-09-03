@@ -16,7 +16,8 @@ export default async function ConsoleLayout({ children }: { readonly children: R
   try {
     actor = await requireActor(request, crypto.randomUUID());
   } catch {
-    redirect(isLocalIdentityMode(process.env) ? "/local-demo" : "/sign-in/");
+    const identityPath = isLocalIdentityMode(process.env) ? "/local-demo" : "/sign-in/";
+    redirect(identityPath);
   }
   const permissions = new Set(actor.assignments
     .filter((assignment) => isRoleAssignmentActive(assignment, new Date()))
