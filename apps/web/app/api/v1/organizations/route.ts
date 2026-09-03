@@ -1,4 +1,5 @@
 import { createOrganizationRequestSchema } from "@scouthub/contracts";
+import { ApplicationError } from "@scouthub/application";
 import {
   authorizeOrganization,
   handleRouteError,
@@ -25,6 +26,9 @@ export async function POST(request: Request) {
       action: "organization.create",
       organization: parent
     });
+    if (!actor.assignments.some((assignment) => assignment.tenantId === payload.tenantId && assignment.permissions.includes("organization.create"))) {
+      throw new ApplicationError("Permission denied.", "AUTHZ_DENIED", 403);
+    }
     const organization = await organizationUseCases.createOrganization({
       ...payload,
       activeFrom: payload.activeFrom === undefined || payload.activeFrom === null ? null : new Date(payload.activeFrom),

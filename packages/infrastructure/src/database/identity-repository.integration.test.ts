@@ -19,9 +19,11 @@ const databaseUrl =
 const ids = {
   tenant: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
   region: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
+  districtA: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa12",
   groupA: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3",
   regionB: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4",
-  groupB: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa04",
+  districtB: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa13",
+  groupB: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3",
   adminAccount: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5",
   adminPerson: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa6",
   adminAssignment: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa7",
@@ -750,7 +752,7 @@ async function auditCount(action: string, resourceId: string): Promise<number> {
 async function createOrganizations(): Promise<void> {
   const orgUseCases = new OrganizationUseCases(
     createPgOrganizationRepository(databaseUrl),
-    organizationIds([ids.tenant, ids.region, ids.groupA, ids.regionB, ids.groupB])
+    organizationIds([ids.tenant, ids.region, ids.districtA, ids.groupA, ids.regionB, ids.districtB, ids.groupB])
   );
   await orgUseCases.createTenantRoot({ name: "Tenant Alpha", code: "TENANT" });
   await orgUseCases.createOrganization({
@@ -763,6 +765,13 @@ async function createOrganizations(): Promise<void> {
   await orgUseCases.createOrganization({
     tenantId: ids.tenant,
     parentId: ids.region,
+    type: "DISTRICT",
+    name: "District Alpha",
+    code: "DISTRICT-A"
+  });
+  await orgUseCases.createOrganization({
+    tenantId: ids.tenant,
+    parentId: ids.districtA,
     type: "GROUP",
     name: "Group A",
     code: "GROUP-A"
@@ -777,6 +786,13 @@ async function createOrganizations(): Promise<void> {
   await orgUseCases.createOrganization({
     tenantId: ids.tenant,
     parentId: ids.regionB,
+    type: "DISTRICT",
+    name: "District Beta",
+    code: "DISTRICT-B"
+  });
+  await orgUseCases.createOrganization({
+    tenantId: ids.tenant,
+    parentId: ids.districtB,
     type: "GROUP",
     name: "Group B",
     code: "GROUP-B"

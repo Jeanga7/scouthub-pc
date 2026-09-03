@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assertRootRules,
+  canContain,
   isAllowedParentChild,
   isSlice1CreatableType,
   normalizeOrganizationCode,
@@ -12,16 +13,25 @@ describe("organization hierarchy", () => {
   it.each([
     ["NSO", "REGION"],
     ["REGION", "DISTRICT"],
-    ["REGION", "GROUP"],
     ["DISTRICT", "GROUP"],
-    ["GROUP", "UNIT"]
+    ["GROUP", "ANNEX"],
+    ["GROUP", "UNIT"],
+    ["ANNEX", "UNIT"]
   ] as const)("allows %s -> %s", (parentType, childType) => {
     expect(isAllowedParentChild(parentType, childType)).toBe(true);
+  });
+
+  it("keeps the V1 REGION -> DISTRICT -> GROUP chain explicit", () => {
+    expect(canContain("REGION", "DISTRICT")).toBe(true);
+    expect(canContain("REGION", "GROUP")).toBe(false);
+    expect(canContain("DISTRICT", "GROUP")).toBe(true);
   });
 
   it.each([
     ["REGION", "UNIT"],
     ["DISTRICT", "UNIT"],
+    ["ANNEX", "GROUP"],
+    ["REGION", "ANNEX"],
     ["GROUP", "GROUP"],
     ["UNIT", "GROUP"],
     ["UNIT", "UNIT"]

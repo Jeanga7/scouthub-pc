@@ -34,6 +34,7 @@ export {
 } from "./organization/organization";
 export {
   buildOrganizationPath,
+  canContain,
   isAllowedParentChild,
   isDescendantPath,
   replacePathPrefix
