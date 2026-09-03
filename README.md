@@ -1,8 +1,6 @@
 # ScoutHub-PC
 
-Plateforme numerique regionale du scoutisme. Ce depot est bootstrappe pour la
-Slice 2 ajoute l'identite Clerk, le modele Account/Person, les invitations
-adultes et l'autorisation ScoutHub portee par PostgreSQL.
+Plateforme numérique de pilotage du scoutisme régional. Le pilote local présente les organisations, projets, validations et preuves avec des données entièrement fictives.
 
 ## Prerequis
 
@@ -12,10 +10,22 @@ adultes et l'autorisation ScoutHub portee par PostgreSQL.
 
 Le depot fournit `.node-version` et `.nvmrc` avec la valeur `24`.
 
-## Demarrage local
+## Démarrage local rapide
 
 ```bash
 make install
+cp .env.example .env
+make demo-setup
+make dev
+```
+
+Ouvrir **http://localhost:3000** puis « Accéder à ScoutHub ». Trois personas seedés sont disponibles : Administratrice régionale (organisations et administration), Responsable de groupe (projets, soumission et Evidence), et Reviewer régional (file de validation et décisions).
+
+Le navigateur ne fournit qu’un identifiant opaque dans un cookie HttpOnly SameSite=Lax. Account, Person, rôle, permissions, tenant et périmètre sont toujours résolus depuis PostgreSQL. Ce mode est strictement limité à `APP_ENV=local`.
+
+Démarrage manuel équivalent :
+
+```bash
 make db-up
 make migrate
 make db-seed-dev
@@ -47,10 +57,7 @@ Routes principales :
 - `GET /api/v1/organizations/:id/ancestors`
 - `GET /api/v1/organizations/:id/descendants`
 
-Les routes `/app/*` et les APIs internes utilisent maintenant Clerk pour
-l'authentification et les RoleAssignments ScoutHub en PostgreSQL pour
-l'autorisation. Le bootstrap initial d'un RegionalAdmin se fait uniquement par
-CLI, pas par endpoint public.
+Hors local, les routes privées utilisent Clerk pour l’identité et les RoleAssignments PostgreSQL pour l’autorisation. Le bootstrap initial d’un RegionalAdmin reste exclusivement disponible par CLI.
 
 ## Gates
 
@@ -82,7 +89,7 @@ Conventions :
 - `preview` : variables runtime Cloudflare, donnees fictives uniquement.
 - `production` : variables/secrets Cloudflare proteges, `DATABASE_URL` secret.
 
-Clerk doit etre configure manuellement en mode restricted/invitation-only. Voir
+En local, Clerk et R2 peuvent rester vides : le provider d’identité local et le LocalObjectStorage same-origin sont sélectionnés. Preview, staging et production exigent Clerk et R2 et échouent fermés si la configuration manque. Voir
 `docs/runbooks/CLERK_SETUP.md` et `docs/runbooks/IDENTITY_BOOTSTRAP.md`.
 
 ## Infrastructure
@@ -95,8 +102,8 @@ Aucune ressource cloud ni service payant n'est cree automatiquement.
 
 ## Seed fictif
 
-`make db-seed-dev` applique uniquement des donnees synthetiques locales :
-deux tenants fictifs, un chemin avec district et un chemin sans district. La
+`make db-seed-dev` applique uniquement des données synthétiques locales :
+deux tenants fictifs, une hiérarchie Petite Côte, trois personas adultes, trois projets (`DRAFT`, `READY_FOR_REVIEW`, `APPROVED_FOR_EXECUTION`) et un historique de revue. La
 commande exige `APP_ENV=local` ou `APP_ENV=test`. En `local`, elle refuse une
 `DATABASE_URL` distante afin d'eviter tout seed accidentel hors PostgreSQL local.
 

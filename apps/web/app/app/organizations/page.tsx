@@ -6,6 +6,7 @@ import { mapOrganization } from "@/organizations/http";
 import { requestId } from "@/organizations/http";
 import { createOrganizationUseCases } from "@/organizations/service";
 import { OrganizationsConsole } from "./organizations-console";
+import { headers } from "next/headers";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +16,8 @@ export default async function OrganizationsPage({
   readonly searchParams: Promise<{ tenantId?: string }>;
 }) {
   void _searchParams;
-  const request = new Request("http://localhost/app/organizations");
+  const incoming = await headers();
+  const request = new Request("http://localhost/app/organizations", { headers: { cookie: incoming.get("cookie") ?? "" } });
   const actor = await requireActor(request, requestId(request));
   const now = new Date();
   const scope = actor.assignments.find(
@@ -42,6 +44,7 @@ export default async function OrganizationsPage({
       <main className="page wide">
         <OrganizationsConsole
           initialTenantId={tenantId}
+          initialScopeOrganizationId={scope?.scopeOrgId ?? ""}
           initialOrganizations={organizations}
         />
       </main>

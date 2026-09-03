@@ -9,11 +9,13 @@ import {
 import { createIdentityUseCases } from "@/identity/service";
 import { requestId } from "@/organizations/http";
 import { AccessConsole } from "./access-console";
+import { headers } from "next/headers";
 
 export const dynamic = "force-dynamic";
 
 export default async function AccessAdminPage() {
-  const request = new Request("http://localhost/app/admin/access");
+  const incoming = await headers();
+  const request = new Request("http://localhost/app/admin/access", { headers: { cookie: incoming.get("cookie") ?? "" } });
   const actor = await requireActor(request, requestId(request));
   const now = new Date();
   const scope = actor.assignments.find(

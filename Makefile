@@ -2,7 +2,7 @@ SHELL := /bin/sh
 
 .DEFAULT_GOAL := help
 
-.PHONY: help install dev db-up db-down db-ps db-logs migrate db-seed-dev db-generate db-studio lint typecheck test test-integration build build-workers preview deploy cf-typegen check ci
+.PHONY: help install dev demo-setup db-up db-down db-ps db-logs migrate db-seed-dev db-generate db-studio lint typecheck test test-integration build build-workers preview deploy cf-typegen check ci
 
 help:
 	@printf '%s\n' 'ScoutHub-PC commands'
@@ -13,6 +13,7 @@ help:
 	@printf '%s\n' '  make migrate        Apply Drizzle migrations'
 	@printf '%s\n' '  make db-seed-dev    Seed fictive local development data'
 	@printf '%s\n' '  make dev            Start the Next.js dev server'
+	@printf '%s\n' '  make demo-setup     Start DB, migrate and load the local demo seed'
 	@printf '%s\n' ''
 	@printf '%s\n' 'Quality gates:'
 	@printf '%s\n' '  make lint           Run ESLint and provider boundary check'
@@ -38,7 +39,11 @@ install:
 	pnpm install
 
 dev:
-	pnpm dev
+	@test -f .env || (printf '%s\n' 'Missing .env. Run: cp .env.example .env' && exit 1)
+	set -a; . ./.env; set +a; pnpm dev
+
+demo-setup: db-up migrate db-seed-dev
+	@printf '%s\n' 'Demo ready. Run make dev, then open http://localhost:3000'
 
 db-up:
 	docker compose up -d postgres
