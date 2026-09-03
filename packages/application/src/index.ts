@@ -12,6 +12,10 @@ export type {
   OutboxTransaction,
   SettleOutboxEventInput
 } from "./ports/outbox-repository";
+export {
+  assertValidClaimOutboxBatchInput,
+  assertValidSettleOutboxEventInput
+} from "./ports/outbox-repository";
 export { InMemoryOutboxRepository } from "./ports/in-memory-outbox-repository";
 export type {
   CreateIdentityInvitationInput,
