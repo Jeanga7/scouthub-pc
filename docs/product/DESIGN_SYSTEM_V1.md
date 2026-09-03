@@ -7,13 +7,14 @@ Mobile-first, blanc dominant, bleu profond comme marque, surfaces gris très lé
 ## Tokens
 
 - **Couleurs :** `brand.950 #071A33`, `brand.800 #123B68`, `brand.600 #1769AA`, `brand.100 #E8F2FA`, `surface #FFFFFF`, `canvas #F6F8FB`, `border #DCE4EC`, `text #102033`, `muted #5E6D7E`, `success #19764A`, `warning #B06A00`, `danger #B42318`.
-- **Typographie :** system sans pour l’UI, 14–16 px corps, 12 px metadata, titres 1.75–3.5 rem avec interlignage compact ; jamais de texte uniquement en capitales.
+- **Typographie :** `typography.fontFamily.ui` est une system sans ; `fontSize` expose metadata `0.75rem`, body `1rem`, lead `1.125rem`, title `1.75rem`, display `3.5rem` ; `fontWeight` va de 400 à 700 ; `lineHeight` expose tight 1.15, normal 1.5, relaxed 1.6 ; letter spacing tight -0.02em, normal 0, wide 0.04em. Jamais de texte uniquement en capitales.
 - **Espacement :** échelle 4, 8, 12, 16, 24, 32, 48, 64 px.
 - **Rayons :** 6 px contrôles, 10 px cartes, 16 px panneaux, 999 px pills/avatar.
 - **Ombres :** `0 1px 2px #1020330D`, `0 8px 24px #10203312`, réservées aux éléments en élévation.
 - **Breakpoints :** 0–639 mobile, 640–1023 tablette, 1024+ desktop ; contenu max 1200 px.
 - **Z-index :** base 0, sticky 10, topbar 20, sheet 30, modal 40, toast 50.
 - **Motion :** 120–180 ms ease-out pour feedback ; 240 ms pour sheets ; respecter `prefers-reduced-motion`.
+- **Focus et contrôles :** `focus.ringColor #1769AA`, largeur 3 px, offset 2 px ; `control.minTouchSize 44px`.
 
 ## Composants cibles
 

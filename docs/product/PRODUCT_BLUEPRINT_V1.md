@@ -10,9 +10,9 @@ La région Petite Côte est le seul périmètre produit V1. Les données de dém
 
 ## 2. Organisation et maîtrises
 
-La hiérarchie cible est : **Région → Districts → Groupes → Annexes éventuelles → Unités / branches**. Les unités actuelles sont Jaune, Verte et Rouge, mais branches et types doivent rester administrables. Le domaine conserve les contraintes : REGION contient DISTRICT, DISTRICT contient GROUP, GROUP contient ANNEX ou UNIT, ANNEX contient UNIT. Une Annexe reste rattachée à son Groupe principal et sous la responsabilité du Chef de Groupe ; elle n’est pas un niveau hiérarchique.
+La hiérarchie cible est : **Région → Districts → Groupes → Annexes éventuelles → Unités / branches**. Les unités actuelles sont Jaune, Verte et Rouge, mais branches et types doivent rester administrables. Le domaine conserve les contraintes : REGION contient DISTRICT, DISTRICT contient GROUP, GROUP contient ANNEX ou UNIT, ANNEX contient UNIT. Une Annexe est un vrai nœud enfant du Groupe : elle peut avoir membres, unités, activités, camps, statistiques et espace ScoutHub. Elle reste sous l’autorité du Chef du Groupe parent et fonctionne opérationnellement presque comme un Groupe, sans constituer pour autant un niveau d’autorité territoriale autonome comparable à Région, District ou Groupe. Il faut distinguer le niveau organisationnel dans l’arbre du niveau d’autorité autonome.
 
-Chaque niveau peut avoir une équipe : Commissaire régional, titulaires, adjoints et conseillers ; responsables de district, coordonnateurs de branches/secteurs et adjoints ; Chef de Groupe, assistants, Chefs d’Unité et assistants. La maîtrise de groupe désigne cette équipe et n’ajoute aucun niveau à l’arbre.
+Les équipes sont attachables aux structures pertinentes : équipe régionale (Commissaire régional, titulaires, adjoints, conseillers), équipe/coordination de district (responsable, coordonnateurs de branches/secteurs, adjoints), maîtrise de groupe (Chef de Groupe, assistants, Chefs d’Unité et assistants), équipe locale analogue lorsqu’une Annexe en dispose sous la responsabilité du Groupe parent, et équipe d’Unité (Chef d’Unité + assistants). Une Team/Maîtrise décrit des responsables ; elle n’est jamais un enfant organisationnel dans l’arbre.
 
 ## 3. Personnes, comptes et Scout ID
 
@@ -28,6 +28,10 @@ Le catalogue de `Position` est configurable : commissaires régionaux et de bran
 
 Un Chef de Groupe peut affecter librement les responsables de son groupe. Au-dessus du groupe, la nomination exige la validation hiérarchique correspondante. Les permissions découlent des fonctions actives ; elles ne sont pas saisies personne par personne et une usurpation doit être impossible.
 
+### Matrice d’autorité (conceptuelle)
+
+Une personne ne peut jamais s’auto-valider une nomination ni créer une nomination hors de son scope. Le Chef de Groupe peut nommer les responsables placés sous son autorité au niveau Groupe, Annexe et Unité ; sa propre nomination doit provenir d’une autorité supérieure appropriée. Les fonctions District nécessitent une validation hiérarchique supérieure et les fonctions Région suivent l’autorité régionale compétente. Une personne peut cumuler plusieurs appointments ; chacun possède indépendamment position, scope, dates et statut. Une future `AppointmentPolicy` configurera les validateurs et délégations sans les figer prématurément dans le code.
+
 ## 5. Autorisation
 
 ScoutHub applique un RBAC scopé par périmètre : **fonction active → permissions → scope → descendants autorisés**. Un Chef de Groupe gère son groupe, ses unités et annexes, ses membres, activités, camps et projets. Un Commissaire de District voit son district et ses groupes, consulte les statistiques, coordonne le calendrier et instruit les dossiers de camp. La Région consolide, supervise, communique et administre la structure.
@@ -38,7 +42,7 @@ Masquer un lien dans l’UI n’est jamais une autorisation. Toute règle critiq
 
 Un moteur conceptuel `AdministrativeCase` (non implémenté dans cette PR) pourra porter camps, projets, devoirs Badge de Bois et futures demandes. Un dossier de camp de Groupe est déposé au moins deux mois avant, examiné par le District, remonté à la Région pour information, puis validé ou renvoyé avec modifications au Groupe. Un camp de District suit District → Région → validation/modifications → District.
 
-Un dossier contient dates, lieu, responsables, participants, dossier et pièces, commentaires, historique et décision. Les projets prioritaires sont le projet Programme Jeune/partenariat (instruction Programme Jeune) et le devoir Badge de Bois (Ressources Adultes). Le modèle `Project/Review/Evidence` actuel est conservé et étendu progressivement ; le type de dossier choisit le workflow compétent.
+Un dossier contient dates, lieu, responsables, participants, dossier et pièces, commentaires, historique et décision. Les projets prioritaires sont le projet Programme Jeune/partenariat et le devoir Badge de Bois. Le devoir/projet Badge de Bois relève de Ressources Adultes ; les autres projets relèvent de Programme Jeune ou Partenariat selon leur nature et la configuration. Une future `ProjectRoutingPolicy` combinera type/catégorie, scope organisationnel, secteur compétent et fonction active du validateur. Le modèle `Project/Review/Evidence` actuel est conservé et étendu progressivement.
 
 ## 7. Ressources adultes et passeport
 
@@ -66,7 +70,7 @@ Les données générales suivent l’accès hiérarchique normal ; les données 
 
 ## 12. Vitrine publique
 
-La vitrine sera dynamique et administrable, avec une direction originale ScoutHub/Petite Côte : blanc dominant, bleu profond, compositions éditoriales, photographies fortes, formes géométriques, cartes d’actions, chiffres d’impact, partenaires, CTA sobres. Sections : Hero, Région, domaines d’action, chiffres clés, projets terrain, impact, actualités, partenaires, appel à partenariat et contact.
+La vitrine sera dynamique et administrable, avec une direction originale ScoutHub/Petite Côte : blanc dominant, bleu profond, compositions éditoriales, photographies fortes, formes géométriques, cartes d’actions, chiffres d’impact, partenaires, CTA sobres. La référence visuelle fournie par le Product Owner inspire cette grammaire visuelle ; elle n’est pas un template à copier. L’application interne et la vitrine partagent l’identité de marque, mais la vitrine est éditoriale, émotionnelle et institutionnelle tandis que l’interne est opérationnel, dense lorsque nécessaire et mobile-first. Sections : Hero, Région, domaines d’action, chiffres clés, projets terrain, impact, actualités, partenaires, appel à partenariat et contact.
 
 Une publication suit la boucle **Projet interne → exécution → Evidence → validation → candidat à publication → validation Communication/Région → page publique**. Les projections publiques ne lisent jamais les dossiers internes bruts.
 
@@ -88,18 +92,19 @@ Sur mobile : **Aujourd’hui · Membres · + · Calendrier · Plus**. Le bouton 
 
 | Jours | Slice | Valeur utilisateur | Backend / frontend / tests | Definition of Done |
 |---|---|---|---|---|
-| 1–2 | Modèle membres & Scout ID | retrouver une personne durablement | Person/ID, recherche mobile, tests de confidentialité | création, recherche et isolation validées |
-| 3–4 | Structure & nominations | voir qui est responsable de quoi | positions/appointments, arbre et affectation | validation hiérarchique et négatifs d’accès |
-| 5 | Aujourd’hui | savoir quoi traiter maintenant | agrégats existants, cartes d’actions | contenu contextualisé par persona |
-| 6–7 | Projets & Evidence V1 | instruire et prouver une action | extensions Project/Review, cartes/timeline | cycle complet avec tests d’autorisation |
-| 8–9 | Camps / dossiers | déposer et suivre un camp | première verticale AdministrativeCase | dépôt, commentaires, décision, historique |
+| 1–2 | Structure + shell premium | se repérer et comprendre son périmètre | arbre/scopes existants, shell mobile/desktop et tokens appliqués | navigation responsive et accès scopés démontrés |
+| 3–4 | Positions / Appointments / gouvernance | savoir qui peut nommer qui | positions/appointments, matrice/policy, tests d’autorité | validation hiérarchique et négatifs d’accès |
+| 5–6 | Membres / Scout ID | retrouver une personne durablement | Person/ID, recherche mobile, tests de confidentialité | création, recherche et isolation validées |
+| 7 | Aujourd’hui | savoir quoi traiter maintenant | agrégats existants, cartes d’actions | contenu contextualisé par persona |
+| 8 | Projets & Evidence V1 | instruire et prouver une action | extensions Project/Review, cartes/timeline | cycle complet avec tests d’autorisation |
+| 9 | Camps / dossiers | déposer et suivre un camp | première verticale AdministrativeCase | dépôt, commentaires, décision, historique |
 | 10 | Calendrier | coordonner les échéances | événements et scopes, calendrier responsive | visibilité hiérarchique testée |
 | 11 | Campagne nominative | remonter des informations fiables | Campaign et progression | Groupe → District → Région démontré |
 | 12 | Communications simples | informer la bonne audience | annonces/audiences, inbox légère | ciblage et absence de fuite validés |
 | 13 | Vitrine dynamique | montrer l’impact publiable | projection publique, pages éditoriales | publication approuvée uniquement |
 | 14 | Stabilisation & accessibilité | utiliser V1 tous les jours | responsive, performance, observabilité | smoke mobile/desktop, gates verts |
 
-Chaque slice apporte une interaction visible ; l’infrastructure ne précède pas indéfiniment la valeur produit.
+Chaque slice apporte une interaction visible ; l’infrastructure ne précède pas indéfiniment la valeur produit. Le design system et le mobile-first sont appliqués au fil de chaque slice, et non repoussés à la stabilisation finale.
 
 ## 16. Écarts avec l’existant et migration
 
