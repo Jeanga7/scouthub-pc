@@ -1,12 +1,11 @@
 import { redirect } from "next/navigation";
-import type { Route } from "next";
 import Link from "next/link";
 import { localDemoPersonas } from "@/identity/local-personas";
 import { isLocalIdentityMode } from "@/identity/local-mode";
 
 export default function LocalDemoPage() {
   if (!isLocalIdentityMode(process.env)) {
-    redirectToIdentity("/sign-in");
+    redirect("/sign-in/");
   }
   return (
     <main className="page demo-login">
@@ -29,9 +28,4 @@ export default function LocalDemoPage() {
       </section>
     </main>
   );
-}
-
-function redirectToIdentity(path: string): never {
-  // Next typed routes omit the base path of optional catch-all auth routes.
-  return redirect(path as Route);
 }

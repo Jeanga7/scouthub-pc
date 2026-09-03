@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import type { Route } from "next";
 import { isRoleAssignmentActive } from "@scouthub/domain";
 import { requireActor } from "@/identity/http";
 import { isLocalIdentityMode } from "@/identity/local-mode";
@@ -17,7 +16,7 @@ export default async function ConsoleLayout({ children }: { readonly children: R
   try {
     actor = await requireActor(request, crypto.randomUUID());
   } catch {
-    redirectToIdentity(isLocalIdentityMode(process.env) ? "/local-demo" : "/sign-in");
+    redirect(isLocalIdentityMode(process.env) ? "/local-demo" : "/sign-in/");
   }
   const permissions = new Set(actor.assignments
     .filter((assignment) => isRoleAssignmentActive(assignment, new Date()))
@@ -41,9 +40,4 @@ export default async function ConsoleLayout({ children }: { readonly children: R
       {children}
     </div>
   );
-}
-
-function redirectToIdentity(path: string): never {
-  // Next typed routes omit the base path of optional catch-all auth routes.
-  return redirect(path as Route);
 }
