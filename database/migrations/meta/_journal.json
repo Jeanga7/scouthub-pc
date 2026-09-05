@@ -64,6 +64,20 @@
       "when": 1788406938067,
       "tag": "0008_huge_mockingbird",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1788626719919,
+      "tag": "0009_short_boomerang",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788626969210,
+      "tag": "0010_illegal_pestilence",
+      "breakpoints": true
     }
   ]
 }

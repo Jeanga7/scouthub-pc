@@ -27,7 +27,7 @@ export default async function ConsoleLayout({ children }: { readonly children: R
     .flatMap((assignment) => assignment.permissions));
   return (
     <div className="console-shell">
-      <Sidebar><Link className="brand" href="/app"><span className="brand-mark">S</span> ScoutHub-PC</Link><span className="nav-label">Aujourd’hui</span><Link href="/app">Tableau de bord</Link><span className="nav-label">Pilotage</span>{permissions.has("organization.read") ? <Link href="/app/structure">Structure</Link> : null}{permissions.has("project.read") ? <Link href="/app/projects">Projets</Link> : null}<span className="nav-label">Administration</span>{permissions.has("role.read") ? <Link href="/app/admin/access">Accès</Link> : null}</Sidebar>
+      <Sidebar><Link className="brand" href="/app"><span className="brand-mark">S</span> ScoutHub-PC</Link><span className="nav-label">Aujourd’hui</span><Link href="/app">Tableau de bord</Link><span className="nav-label">Pilotage</span>{permissions.has("organization.read") ? <Link href="/app/structure">Structure</Link> : null}{permissions.has("project.read") ? <Link href="/app/projects">Projets</Link> : null}<span className="nav-label">Administration</span>{permissions.has("role.read") ? <><Link href="/app/governance">Fonctions & nominations</Link><Link href="/app/admin/access">Accès</Link></> : null}</Sidebar>
       <header className="console-header">
         <div className="topbar-context"><span className="brand-mark">S</span><span>ScoutHub-PC</span></div>
         <div className="account-area">
