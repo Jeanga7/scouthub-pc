@@ -64,6 +64,20 @@
       "when": 1788406938067,
       "tag": "0008_huge_mockingbird",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1788627611733,
+      "tag": "0009_short_triton",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788630078906,
+      "tag": "0010_governance_permissions",
+      "breakpoints": true
     }
   ]
 }

@@ -28,6 +28,7 @@ export { createPgOrganizationRepository } from "./database/organization-reposito
 export { createPgIdentityRepository } from "./database/identity-repository";
 export { createPgProjectRepository } from "./database/project-repository";
 export { createPgEvidenceRepository } from "./database/evidence-repository";
+export { createPgPositionRepository, createPgAppointmentRepository } from "./database/governance-repository";
 export {
   createPgOutboxRepository,
   PgOutboxRepository,

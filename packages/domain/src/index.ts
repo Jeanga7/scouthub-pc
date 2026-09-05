@@ -122,6 +122,7 @@ export type {
   EvidenceValidationStatus,
   EvidenceVisibility
 } from "./evidence/evidence";
+export * from "./governance";
 export {
   assertEvidenceByteSize,
   assertEvidenceClassification,

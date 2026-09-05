@@ -1,6 +1,7 @@
 import {
   check,
   bigint,
+  boolean,
   foreignKey,
   index,
   integer,
@@ -185,6 +186,9 @@ export const personStatus = pgEnum("person_status", [
   "INACTIVE",
   "ANONYMIZED"
 ]);
+
+export const appointmentStatus = pgEnum("appointment_status", ["PENDING", "ACTIVE", "REJECTED", "ENDED"]);
+export const holderPolicy = pgEnum("holder_policy", ["SINGLE", "MULTIPLE"]);
 
 export const accountInvitationStatus = pgEnum("account_invitation_status", [
   "CREATING",
@@ -969,3 +973,11 @@ export const evidence = pgTable(
     check("evidence_slice5_type_allowlist", sql`${table.type} IN ('PHOTO', 'DOCUMENT', 'ATTESTATION', 'EXTERNAL_CAPTURE')`)
   ]
 );
+
+export const position = pgTable("position", {
+  id: uuid("id").defaultRandom().primaryKey(), tenantId: uuid("tenant_id").notNull(), code: text("code").notNull(), title: text("title").notNull(), description: text("description"), allowedScopeTypes: jsonb("allowed_scope_types").notNull().default([]), sector: text("sector"), branch: text("branch"), holderPolicy: holderPolicy("holder_policy").notNull().default("MULTIPLE"), active: boolean("active").notNull().default(true), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+}, (table) => [unique("position_id_tenant_unique").on(table.id, table.tenantId), unique("position_tenant_code_unique").on(table.tenantId, table.code), index("position_tenant_idx").on(table.tenantId), foreignKey({ columns: [table.tenantId], foreignColumns: [organization.id], name: "position_tenant_fk" }).onDelete("restrict")]);
+
+export const appointment = pgTable("appointment", {
+  id: uuid("id").defaultRandom().primaryKey(), tenantId: uuid("tenant_id").notNull(), personId: uuid("person_id").notNull(), positionId: uuid("position_id").notNull(), scopeOrgId: uuid("scope_org_id").notNull(), status: appointmentStatus("status").notNull().default("PENDING"), startsAt: timestamp("starts_at", { withTimezone: true }).notNull(), endsAt: timestamp("ends_at", { withTimezone: true }), proposedBy: uuid("proposed_by").notNull(), validatedBy: uuid("validated_by"), proposedAt: timestamp("proposed_at", { withTimezone: true }).notNull().defaultNow(), validatedAt: timestamp("validated_at", { withTimezone: true }), endedAt: timestamp("ended_at", { withTimezone: true }), notes: text("notes"), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+}, (table) => [index("appointment_tenant_idx").on(table.tenantId), index("appointment_person_idx").on(table.tenantId, table.personId), index("appointment_position_idx").on(table.tenantId, table.positionId), index("appointment_scope_idx").on(table.tenantId, table.scopeOrgId), index("appointment_status_dates_idx").on(table.tenantId, table.status, table.startsAt), foreignKey({ columns: [table.tenantId], foreignColumns: [organization.id], name: "appointment_tenant_fk" }).onDelete("restrict"), foreignKey({ columns: [table.personId, table.tenantId], foreignColumns: [person.id, person.tenantId], name: "appointment_person_tenant_fk" }).onDelete("restrict"), foreignKey({ columns: [table.positionId, table.tenantId], foreignColumns: [position.id, position.tenantId], name: "appointment_position_tenant_fk" }).onDelete("restrict"), foreignKey({ columns: [table.scopeOrgId, table.tenantId], foreignColumns: [organization.id, organization.tenantId], name: "appointment_scope_tenant_fk" }).onDelete("restrict"), check("appointment_dates_valid", sql`${table.endsAt} IS NULL OR ${table.startsAt} < ${table.endsAt}`)]);
