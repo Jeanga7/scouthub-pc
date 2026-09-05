@@ -33,8 +33,8 @@ CREATE TABLE "position" (
 	"active" boolean DEFAULT true NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "position_id_tenant_unique" UNIQUE("id","tenant_id"),
 	CONSTRAINT "position_tenant_code_unique" UNIQUE("tenant_id","code")
-	,CONSTRAINT "position_id_tenant_unique" UNIQUE("id","tenant_id")
 );
 --> statement-breakpoint
 ALTER TABLE "appointment" ADD CONSTRAINT "appointment_tenant_fk" FOREIGN KEY ("tenant_id") REFERENCES "public"."organization"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint

@@ -1,5 +1,5 @@
 {
-  "id": "fddd4c04-8ec2-44c5-b77b-c5fd7520bdd2",
+  "id": "e418ab30-26c6-45e9-98ea-58a7f76bc96d",
   "prevId": "131ca425-942c-4744-aee4-e76aa5b30a68",
   "version": "7",
   "dialect": "postgresql",
@@ -2656,6 +2656,14 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
+        "position_id_tenant_unique": {
+          "name": "position_id_tenant_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "id",
+            "tenant_id"
+          ]
+        },
         "position_tenant_code_unique": {
           "name": "position_tenant_code_unique",
           "nullsNotDistinct": false,

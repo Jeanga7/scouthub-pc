@@ -75,6 +75,7 @@ export type {
   ReviewQueuePage,
   StateTransitionRecord
 } from "./ports/project-repository";
+export type { AppointmentRepository, AppointmentTransaction, PositionRepository, PositionTransaction } from "./ports/governance-repository";
 export {
   ApplicationError,
   ConflictError,

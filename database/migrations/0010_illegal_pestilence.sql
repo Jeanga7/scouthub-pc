@@ -1,1 +1,0 @@
-ALTER TABLE "position" ADD CONSTRAINT "position_id_tenant_unique" UNIQUE("id","tenant_id");
