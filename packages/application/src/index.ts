@@ -121,3 +121,4 @@ export {
   type ProjectWorkflowInput,
   type UpdateProjectDraftInput
 } from "./project/use-cases";
+export { PositionUseCases, AppointmentUseCases } from "./governance/use-cases";

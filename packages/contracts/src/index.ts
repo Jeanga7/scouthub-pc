@@ -71,7 +71,17 @@ export const permissionCodeSchema = z.enum([
   "evidence.create",
   "evidence.read",
   "evidence.download"
+  ,"position.read", "position.manage", "appointment.read", "appointment.create", "appointment.validate", "appointment.end"
 ]);
+
+export const holderPolicySchema = z.enum(["SINGLE", "MULTIPLE"]);
+export const positionResponseSchema = z.object({ id: uuidSchema, tenantId: uuidSchema, code: z.string().min(1), title: z.string().min(1), description: z.string().nullable(), allowedScopeTypes: z.array(organizationTypeSchema), sector: z.string().nullable(), branch: z.string().nullable(), holderPolicy: holderPolicySchema, active: z.boolean(), createdAt: z.iso.datetime(), updatedAt: z.iso.datetime() });
+export const createPositionRequestSchema = positionResponseSchema.omit({ id: true, tenantId: true, active: true, createdAt: true, updatedAt: true });
+export const updatePositionRequestSchema = createPositionRequestSchema.partial();
+export const appointmentResponseSchema = z.object({ id: uuidSchema, tenantId: uuidSchema, personId: uuidSchema, positionId: uuidSchema, scopeOrgId: uuidSchema, status: z.enum(["PENDING", "ACTIVE", "REJECTED", "ENDED"]), startsAt: z.iso.datetime(), endsAt: z.iso.datetime().nullable(), proposedBy: uuidSchema, validatedBy: uuidSchema.nullable(), proposedAt: z.iso.datetime(), validatedAt: z.iso.datetime().nullable(), endedAt: z.iso.datetime().nullable(), notes: z.string().nullable(), createdAt: z.iso.datetime(), updatedAt: z.iso.datetime() });
+export const proposeAppointmentRequestSchema = appointmentResponseSchema.pick({ tenantId: true, personId: true, positionId: true, scopeOrgId: true, startsAt: true }).extend({ endsAt: z.iso.datetime().nullable().optional(), notes: z.string().max(2000).nullable().optional() });
+export const appointmentDecisionRequestSchema = z.object({ reason: z.string().max(2000).nullable().optional() });
+export const endAppointmentRequestSchema = appointmentDecisionRequestSchema;
 
 const dateTimeOrNullSchema = z.iso.datetime().nullable().optional();
 const dateTimePatchSchema = z.iso.datetime().nullable().optional();
