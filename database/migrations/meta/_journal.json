@@ -71,6 +71,13 @@
       "when": 1788627611733,
       "tag": "0009_short_triton",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788630078906,
+      "tag": "0010_governance_permissions",
+      "breakpoints": true
     }
   ]
 }

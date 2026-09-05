@@ -1,7 +1,7 @@
 export type {
   AsyncQueue,
   EnqueueOptions,
-  QueueMessage
+  QueueMessage,
 } from "./ports/async-queue";
 export type { EventBus } from "./ports/event-bus";
 export { OutboxEventBus } from "./ports/event-bus";
@@ -10,11 +10,11 @@ export type {
   OutboxRecord,
   OutboxRepository,
   OutboxTransaction,
-  SettleOutboxEventInput
+  SettleOutboxEventInput,
 } from "./ports/outbox-repository";
 export {
   assertValidClaimOutboxBatchInput,
-  assertValidSettleOutboxEventInput
+  assertValidSettleOutboxEventInput,
 } from "./ports/outbox-repository";
 export { InMemoryOutboxRepository } from "./ports/in-memory-outbox-repository";
 export type {
@@ -22,7 +22,7 @@ export type {
   IdentityProvider,
   IdentityProfile,
   IdentityInvitationResult,
-  IdentitySession
+  IdentitySession,
 } from "./ports/identity-provider";
 export { FakeIdentityProvider } from "./ports/fake-identity-provider";
 export type {
@@ -32,20 +32,20 @@ export type {
   ObjectStorageErrorCode,
   ObjectStorage,
   PromoteObjectInput,
-  SignedObjectUrl
+  SignedObjectUrl,
 } from "./ports/object-storage";
 export { ObjectStorageError } from "./ports/object-storage";
-export { FakeObjectStorage, type FakeStoredObject } from "./ports/fake-object-storage";
-export type {
-  BaseRepository,
-  TransactionContext
-} from "./ports/repository";
+export {
+  FakeObjectStorage,
+  type FakeStoredObject,
+} from "./ports/fake-object-storage";
+export type { BaseRepository, TransactionContext } from "./ports/repository";
 export type {
   MoveSubtreeInput,
   OrganizationDetailsUpdate,
   OrganizationInsert,
   OrganizationRepository,
-  OrganizationTransaction
+  OrganizationTransaction,
 } from "./ports/organization-repository";
 export type {
   EvidenceCursor,
@@ -57,7 +57,7 @@ export type {
   EvidenceRepository,
   EvidenceTransaction,
   MediaAssetInsert,
-  MediaAssetRecord
+  MediaAssetRecord,
 } from "./ports/evidence-repository";
 export type {
   ApprovalDecisionRecord,
@@ -73,21 +73,30 @@ export type {
   ProjectRepository,
   ProjectTransaction,
   ReviewQueuePage,
-  StateTransitionRecord
+  StateTransitionRecord,
 } from "./ports/project-repository";
-export type { AppointmentRepository, AppointmentTransaction, PositionRepository, PositionTransaction } from "./ports/governance-repository";
+export type {
+  AppointmentRepository,
+  AppointmentTransaction,
+  AppointmentView,
+  PositionRepository,
+  PositionTransaction,
+} from "./ports/governance-repository";
 export {
   ApplicationError,
   ConflictError,
   NotFoundError,
-  ValidationError
+  ValidationError,
 } from "./organization/errors";
 export type {
   AuditEventInput,
   OrganizationAuditAction,
-  RequestContext
+  RequestContext,
 } from "./organization/audit";
-export { OrganizationUseCases, type IdGenerator } from "./organization/use-cases";
+export {
+  OrganizationUseCases,
+  type IdGenerator,
+} from "./organization/use-cases";
 export type {
   ActorContext,
   AccountAdministrationView,
@@ -96,7 +105,7 @@ export type {
   IdentityRepository,
   IdentityTransaction,
   InviteAdultUserRecord,
-  ScopedOrganizationResource
+  ScopedOrganizationResource,
 } from "./ports/identity-repository";
 export {
   IdentityUseCases,
@@ -104,13 +113,13 @@ export {
   type CreateRoleAssignmentUseCaseInput,
   type EnsureAuthenticatedActorInput,
   type EnsureProvisionedAccountInput,
-  type InviteAdultUserInput
+  type InviteAdultUserInput,
 } from "./identity/use-cases";
 export {
   EvidenceUseCases,
   type ConfirmEvidenceUploadInput,
   type CreateEvidenceDownloadUrlInput,
-  type InitiateEvidenceUploadInput
+  type InitiateEvidenceUploadInput,
 } from "./evidence/use-cases";
 export {
   ProjectUseCases,
@@ -119,6 +128,6 @@ export {
   type ProjectDecisionInput,
   type ProjectReviewInput,
   type ProjectWorkflowInput,
-  type UpdateProjectDraftInput
+  type UpdateProjectDraftInput,
 } from "./project/use-cases";
 export { PositionUseCases, AppointmentUseCases } from "./governance/use-cases";
