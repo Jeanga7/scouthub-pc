@@ -1,4 +1,4 @@
-import { and, asc, eq, ne, sql } from "drizzle-orm";
+import { and, asc, eq, ilike, ne, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import {
@@ -16,6 +16,8 @@ import {
   ApplicationError,
   type AppointmentRepository,
   type AppointmentTransaction,
+  type GovernancePersonDirectoryRepository,
+  type GovernancePersonDirectoryTransaction,
   type PositionRepository,
   type PositionTransaction,
 } from "@scouthub/application";
@@ -30,6 +32,11 @@ export function createPgAppointmentRepository(
   url: string,
 ): AppointmentRepository {
   return new PgAppointmentRepository(url);
+}
+export function createPgGovernancePersonDirectoryRepository(
+  url: string,
+): GovernancePersonDirectoryRepository {
+  return new PgGovernancePersonDirectoryRepository(url);
 }
 
 class PgPositionRepository implements PositionRepository {
@@ -189,6 +196,27 @@ class AppointmentTx implements AppointmentTransaction {
       .returning();
     return row ? mapAppointment(row) : null;
   }
+  async transition(
+    tenantId: string,
+    id: string,
+    expectedStatus: AppointmentStatus,
+    newStatus: AppointmentStatus,
+    patch: Partial<Appointment>,
+  ) {
+    const now = new Date();
+    const [row] = await this.db
+      .update(appointment)
+      .set({ ...patch, status: newStatus, updatedAt: now })
+      .where(
+        and(
+          eq(appointment.tenantId, tenantId),
+          eq(appointment.id, id),
+          eq(appointment.status, expectedStatus),
+        ),
+      )
+      .returning();
+    return row ? mapAppointment(row) : null;
+  }
   async activate(
     tenantId: string,
     id: string,
@@ -258,6 +286,46 @@ class AppointmentTx implements AppointmentTransaction {
       )
       .returning();
     return row ? mapAppointment(row) : null;
+  }
+}
+
+class PgGovernancePersonDirectoryRepository implements GovernancePersonDirectoryRepository {
+  constructor(private readonly url: string) {}
+  async transaction<T>(
+    handler: (tx: GovernancePersonDirectoryTransaction) => Promise<T>,
+  ): Promise<T> {
+    const pool = new pg.Pool({ connectionString: this.url, max: 1 });
+    try {
+      return await drizzle(pool).transaction((db) =>
+        handler(new GovernancePersonDirectoryTx(db)),
+      );
+    } finally {
+      await pool.end();
+    }
+  }
+}
+
+class GovernancePersonDirectoryTx implements GovernancePersonDirectoryTransaction {
+  constructor(private readonly db: Db) {}
+  async searchPeople(tenantId: string, query: string | null) {
+    const normalized = query?.trim();
+    const rows = await this.db
+      .select({
+        id: person.id,
+        tenantId: person.tenantId,
+        displayName: person.displayName,
+      })
+      .from(person)
+      .where(
+        and(
+          eq(person.tenantId, tenantId),
+          eq(person.status, "ACTIVE"),
+          normalized ? ilike(person.displayName, `%${normalized}%`) : undefined,
+        ),
+      )
+      .orderBy(asc(person.displayName), asc(person.id))
+      .limit(25);
+    return rows;
   }
 }
 function mapPosition(row: typeof position.$inferSelect): Position {

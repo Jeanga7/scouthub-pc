@@ -2,6 +2,7 @@ import type { Appointment, Position } from "@scouthub/domain";
 import { ApplicationError, ValidationError } from "../organization/errors";
 import type {
   AppointmentRepository,
+  GovernancePersonDirectoryRepository,
   PositionRepository,
 } from "../ports/governance-repository";
 export class PositionUseCases {
@@ -90,6 +91,7 @@ export class AppointmentUseCases {
     tenantId: string,
     id: string,
     expected: Appointment["status"],
+    next: Appointment["status"],
     patch: Partial<Appointment>,
   ) {
     return this.repository.transaction(async (tx) => {
@@ -106,7 +108,7 @@ export class AppointmentUseCases {
           "APPOINTMENT_INVALID_STATE",
           409,
         );
-      const updated = await tx.update(tenantId, id, patch);
+      const updated = await tx.transition(tenantId, id, expected, next, patch);
       if (updated === null)
         throw new ApplicationError(
           "La nomination a changé.",
@@ -116,13 +118,66 @@ export class AppointmentUseCases {
       return updated;
     });
   }
-  rejectAppointment(tenantId: string, id: string) {
-    return this.transition(tenantId, id, "PENDING", { status: "REJECTED" });
-  }
-  endAppointment(tenantId: string, id: string) {
-    return this.transition(tenantId, id, "ACTIVE", {
-      status: "ENDED",
-      endedAt: new Date(),
+  rejectAppointment(
+    tenantId: string,
+    id: string,
+    rejectedBy: string,
+    reason: string | null = null,
+  ) {
+    return this.transition(tenantId, id, "PENDING", "REJECTED", {
+      rejectedBy,
+      rejectedAt: new Date(),
+      rejectionReason: reason,
     });
+  }
+  endAppointment(tenantId: string, id: string, endedBy: string) {
+    const endedAt = new Date();
+    return this.repository.transaction(async (tx) => {
+      const current = await tx.findById(tenantId, id);
+      if (current === null)
+        throw new ValidationError(
+          "Nomination introuvable.",
+          "APPOINTMENT_NOT_FOUND",
+          404,
+        );
+      if (current.status !== "ACTIVE")
+        throw new ApplicationError(
+          "Transition de nomination invalide.",
+          "APPOINTMENT_INVALID_STATE",
+          409,
+        );
+      const endsAt =
+        current.endsAt !== null && current.endsAt <= endedAt
+          ? current.endsAt
+          : endBoundary(current.startsAt, endedAt);
+      const updated = await tx.transition(tenantId, id, "ACTIVE", "ENDED", {
+        endedBy,
+        endedAt,
+        endsAt,
+      });
+      if (updated === null)
+        throw new ApplicationError(
+          "La nomination a changé.",
+          "APPOINTMENT_INVALID_STATE",
+          409,
+        );
+      return updated;
+    });
+  }
+}
+
+function endBoundary(startsAt: Date, endedAt: Date): Date {
+  if (endedAt > startsAt) return endedAt;
+  return new Date(startsAt.getTime() + 1);
+}
+
+export class GovernancePersonDirectoryUseCases {
+  constructor(
+    private readonly repository: GovernancePersonDirectoryRepository,
+  ) {}
+  searchPeople(tenantId: string, query: string | null = null) {
+    return this.repository.transaction((tx) =>
+      tx.searchPeople(tenantId, query),
+    );
   }
 }

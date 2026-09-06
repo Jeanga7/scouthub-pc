@@ -43,9 +43,13 @@ const appointmentValue = (id: string, personId: string): Appointment => ({
   endsAt: null,
   proposedBy: accountId,
   validatedBy: null,
+  rejectedBy: null,
+  endedBy: null,
   proposedAt: now,
   validatedAt: null,
+  rejectedAt: null,
   endedAt: null,
+  rejectionReason: null,
   notes: null,
   createdAt: now,
   updatedAt: now,
@@ -115,9 +119,79 @@ describe("PostgreSQL governance repositories", () => {
       ),
     ).toBe(true);
     const ended = await repository.transaction((tx) =>
-      tx.update(tenantId, value.id, { status: "REJECTED" }),
+      tx.transition(tenantId, value.id, "PENDING", "REJECTED", {
+        rejectedBy: accountId,
+        rejectedAt: new Date(),
+        rejectionReason: "Motif test",
+      }),
     );
     expect(ended?.status).toBe("REJECTED");
+    expect(ended?.rejectedBy).toBe(accountId);
+    expect(ended?.rejectedAt).not.toBeNull();
+    expect(ended?.rejectionReason).toBe("Motif test");
+  });
+  it("proposes an Appointment for a Person without Account", async () => {
+    const cases = new AppointmentUseCases(
+      createPgAppointmentRepository(databaseUrl),
+    );
+    const value = appointmentValue(crypto.randomUUID(), personA);
+    await expect(cases.proposeAppointment(value)).resolves.toMatchObject({
+      id: value.id,
+      personId: personA,
+      status: "PENDING",
+    });
+  });
+  it("keeps approve vs reject concurrent transitions compare-and-set safe", async () => {
+    const cases = new AppointmentUseCases(
+      createPgAppointmentRepository(databaseUrl),
+    );
+    const value = appointmentValue(crypto.randomUUID(), personA);
+    await cases.proposeAppointment(value);
+    const results = await Promise.allSettled([
+      cases.approveAppointment(tenantId, value.id, crypto.randomUUID()),
+      cases.rejectAppointment(tenantId, value.id, crypto.randomUUID(), "Non"),
+    ]);
+    expect(
+      results.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    expect(
+      results.filter((result) => result.status === "rejected"),
+    ).toHaveLength(1);
+    const final = await cases.getAppointment(tenantId, value.id);
+    expect(["ACTIVE", "REJECTED"]).toContain(final?.status);
+    if (final?.status === "REJECTED") {
+      expect(final.rejectionReason).toBe("Non");
+      expect(final.rejectedBy).not.toBeNull();
+      expect(final.rejectedAt).not.toBeNull();
+    }
+    if (final?.status === "ACTIVE")
+      await cases.endAppointment(tenantId, value.id, crypto.randomUUID());
+  });
+  it("keeps double end concurrent transitions compare-and-set safe", async () => {
+    const cases = new AppointmentUseCases(
+      createPgAppointmentRepository(databaseUrl),
+    );
+    const value = appointmentValue(crypto.randomUUID(), personA);
+    await cases.proposeAppointment({
+      ...value,
+      startsAt: new Date(Date.now() - 60_000),
+    });
+    await cases.approveAppointment(tenantId, value.id, crypto.randomUUID());
+    const results = await Promise.allSettled([
+      cases.endAppointment(tenantId, value.id, crypto.randomUUID()),
+      cases.endAppointment(tenantId, value.id, crypto.randomUUID()),
+    ]);
+    expect(
+      results.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    expect(
+      results.filter((result) => result.status === "rejected"),
+    ).toHaveLength(1);
+    const final = await cases.getAppointment(tenantId, value.id);
+    expect(final?.status).toBe("ENDED");
+    expect(final?.endedBy).not.toBeNull();
+    expect(final?.endedAt).not.toBeNull();
+    expect(final?.endsAt).not.toBeNull();
   });
   it("serializes concurrent SINGLE-holder activation and permits only one overlap", async () => {
     const cases = new AppointmentUseCases(

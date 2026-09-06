@@ -9,6 +9,7 @@ vi.mock("@/identity/http", () => ({ requireActor: vi.fn() }));
 vi.mock("@/governance/service", () => ({
   createPositionUseCases: vi.fn(),
   createAppointmentUseCases: vi.fn(),
+  createGovernancePersonDirectoryUseCases: vi.fn(),
 }));
 vi.mock("@/organizations/service", () => ({
   createOrganizationUseCases: vi.fn(),
@@ -16,6 +17,7 @@ vi.mock("@/organizations/service", () => ({
 import { requireActor } from "@/identity/http";
 import {
   createAppointmentUseCases,
+  createGovernancePersonDirectoryUseCases,
   createPositionUseCases,
 } from "@/governance/service";
 import { createOrganizationUseCases } from "@/organizations/service";
@@ -25,7 +27,9 @@ import {
 } from "../../app/api/v1/governance/positions/route";
 import { PATCH as PATCH_POSITION } from "../../app/api/v1/governance/positions/[id]/route";
 import { POST as POST_APPOINTMENT } from "../../app/api/v1/governance/appointments/route";
+import { GET as GET_PEOPLE } from "../../app/api/v1/governance/people/route";
 import { POST as APPROVE } from "../../app/api/v1/governance/appointments/[id]/approve/route";
+import { POST as REJECT } from "../../app/api/v1/governance/appointments/[id]/reject/route";
 
 type ApiEnvelope<T> = { data: T };
 
@@ -109,9 +113,13 @@ const appointment = {
   endsAt: null,
   proposedBy: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa8",
   validatedBy: null,
+  rejectedBy: null,
+  endedBy: null,
   proposedAt: now,
   validatedAt: null,
+  rejectedAt: null,
   endedAt: null,
+  rejectionReason: null,
   notes: null,
   createdAt: now,
   updatedAt: now,
@@ -127,6 +135,15 @@ beforeEach(() => {
     approveAppointment: vi
       .fn()
       .mockResolvedValue({ ...appointment, status: "ACTIVE" }),
+  } as never);
+  vi.mocked(createGovernancePersonDirectoryUseCases).mockReturnValue({
+    searchPeople: vi.fn().mockResolvedValue([
+      {
+        id: personId,
+        tenantId,
+        displayName: "Personne sans compte",
+      },
+    ]),
   } as never);
   vi.mocked(createOrganizationUseCases).mockReturnValue({
     getOrganization: vi.fn().mockResolvedValue({
@@ -215,6 +232,21 @@ describe("Governance API routes", () => {
     );
     expect(response.status).toBe(201);
   });
+  it("searches appointable Persons without requiring an Account", async () => {
+    vi.mocked(requireActor).mockResolvedValue(actor(["appointment.create"]));
+    const response = await GET_PEOPLE(
+      new Request(
+        `http://localhost/api/v1/governance/people?tenantId=${tenantId}&q=Personne`,
+      ),
+    );
+    const body = (await response.json()) as {
+      data: { id: string; tenantId: string; displayName: string }[];
+    };
+    expect(response.status).toBe(200);
+    expect(body.data).toEqual([
+      { id: personId, tenantId, displayName: "Personne sans compte" },
+    ]);
+  });
   it("directly activates a subordinate unit appointment through policy", async () => {
     const groupId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9";
     const unitId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa10";
@@ -266,6 +298,38 @@ describe("Governance API routes", () => {
       directActivate: true,
       validatedBy: accountId,
     });
+  });
+  it("passes rejection history to the appointment use case", async () => {
+    const rejectAppointment = vi.fn().mockResolvedValue({
+      ...appointment,
+      status: "REJECTED" as const,
+      rejectedBy: accountId,
+      rejectedAt: now,
+      rejectionReason: "Dossier incomplet",
+    });
+    vi.mocked(requireActor).mockResolvedValue(actor(["appointment.validate"]));
+    vi.mocked(createAppointmentUseCases).mockReturnValue({
+      getAppointment: vi.fn().mockResolvedValue(appointment),
+      rejectAppointment,
+    } as never);
+    const response = await REJECT(
+      new Request(
+        `http://localhost/api/v1/governance/appointments/${appointmentId}/reject?tenantId=${tenantId}`,
+        {
+          method: "POST",
+          body: JSON.stringify({ reason: "Dossier incomplet" }),
+          headers: { "content-type": "application/json" },
+        },
+      ),
+      { params: Promise.resolve({ id: appointmentId }) },
+    );
+    expect(response.status).toBe(200);
+    expect(rejectAppointment).toHaveBeenCalledWith(
+      tenantId,
+      appointmentId,
+      accountId,
+      "Dossier incomplet",
+    );
   });
   it("prevents the nominated person from self-validating", async () => {
     vi.mocked(requireActor).mockResolvedValue(

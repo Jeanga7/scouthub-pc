@@ -33,20 +33,27 @@ export interface Appointment {
   readonly endsAt: Date | null;
   readonly proposedBy: string;
   readonly validatedBy: string | null;
+  readonly rejectedBy: string | null;
+  readonly endedBy: string | null;
   readonly proposedAt: Date;
   readonly validatedAt: Date | null;
+  readonly rejectedAt: Date | null;
   readonly endedAt: Date | null;
+  readonly rejectionReason: string | null;
   readonly notes: string | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
+}
+export interface AppointmentGrant {
+  readonly scopePath: string;
+  readonly scopeType: OrganizationType;
+  readonly permissions: readonly string[];
 }
 export interface AppointmentActor {
   readonly accountId: string;
   readonly tenantId: string;
   readonly personId: string | null;
-  readonly scopePaths: readonly string[];
-  readonly scopeTypes: readonly OrganizationType[];
-  readonly permissions: readonly string[];
+  readonly grants: readonly AppointmentGrant[];
 }
 export interface AppointmentScope {
   readonly id: string;
@@ -58,10 +65,15 @@ export interface AppointmentScope {
 function coversScope(
   actor: AppointmentActor,
   scope: AppointmentScope,
+  permission: string,
 ): boolean {
   return (
     actor.tenantId === scope.tenantId &&
-    actor.scopePaths.some((path) => scope.path.startsWith(path))
+    actor.grants.some(
+      (grant) =>
+        grant.permissions.includes(permission) &&
+        scope.path.startsWith(grant.scopePath),
+    )
   );
 }
 export function canProposeAppointment(
@@ -70,8 +82,7 @@ export function canProposeAppointment(
   scope: AppointmentScope,
 ): boolean {
   return (
-    coversScope(actor, scope) &&
-    actor.permissions.includes("appointment.create") &&
+    coversScope(actor, scope, "appointment.create") &&
     position.tenantId === scope.tenantId &&
     position.active &&
     position.allowedScopeTypes.includes(scope.type)
@@ -82,10 +93,18 @@ export function canDirectlyActivateAppointment(
   actor: AppointmentActor,
   position: Position,
   scope: AppointmentScope,
+  proposedPersonId: string,
 ): boolean {
   return (
+    actor.personId !== null &&
+    proposedPersonId !== actor.personId &&
     canProposeAppointment(actor, position, scope) &&
-    actor.scopeTypes.includes("GROUP") &&
+    actor.grants.some(
+      (grant) =>
+        grant.permissions.includes("appointment.create") &&
+        grant.scopeType === "GROUP" &&
+        scope.path.startsWith(grant.scopePath),
+    ) &&
     (scope.type === "UNIT" || scope.type === "ANNEX")
   );
 }
@@ -101,8 +120,7 @@ export function canValidateAppointment(
     appointment.status === "PENDING" &&
     appointment.proposedBy !== actor.accountId &&
     proposedPersonId !== actor.personId &&
-    actor.permissions.includes("appointment.validate") &&
-    coversScope(actor, scope)
+    coversScope(actor, scope, "appointment.validate")
   );
 }
 export function canEndAppointment(
@@ -114,8 +132,7 @@ export function canEndAppointment(
     appointment.tenantId === actor.tenantId &&
     appointment.scopeOrgId === scope.id &&
     appointment.status === "ACTIVE" &&
-    actor.permissions.includes("appointment.end") &&
-    coversScope(actor, scope)
+    coversScope(actor, scope, "appointment.end")
   );
 }
 export function isAppointmentCurrentlyActive(

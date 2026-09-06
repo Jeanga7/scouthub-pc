@@ -1,15 +1,19 @@
 import { headers } from "next/headers";
 import { AppShell, EmptyState, PageHeader } from "@scouthub/ui";
 import { isRoleAssignmentActive } from "@scouthub/domain";
-import { requireActor, mapAccountAdministration } from "@/identity/http";
-import { createIdentityUseCases } from "@/identity/service";
+import { requireActor } from "@/identity/http";
 import { mapOrganization, requestId } from "@/organizations/http";
 import { createOrganizationUseCases } from "@/organizations/service";
 import {
   createAppointmentUseCases,
+  createGovernancePersonDirectoryUseCases,
   createPositionUseCases,
 } from "@/governance/service";
-import { mapAppointment, mapPosition } from "@/governance/http";
+import {
+  mapAppointment,
+  mapGovernancePersonOption,
+  mapPosition,
+} from "@/governance/http";
 import { AppointmentsConsole } from "./appointments-console";
 export const dynamic = "force-dynamic";
 export default async function AppointmentsPage() {
@@ -47,13 +51,15 @@ export default async function AppointmentsPage() {
   const positions = (
     await createPositionUseCases().listPositions(scope.tenantId)
   ).map(mapPosition);
-  let accounts = [] as ReturnType<typeof mapAccountAdministration>[];
+  let people = [] as ReturnType<typeof mapGovernancePersonOption>[];
   try {
-    accounts = (
-      await createIdentityUseCases().listAccounts(actor, scope.tenantId)
-    ).map(mapAccountAdministration);
+    people = (
+      await createGovernancePersonDirectoryUseCases().searchPeople(
+        scope.tenantId,
+      )
+    ).map(mapGovernancePersonOption);
   } catch {
-    accounts = [];
+    people = [];
   }
   const permissions = new Set(
     actor.assignments
@@ -79,7 +85,7 @@ export default async function AppointmentsPage() {
             .map(mapAppointment)}
           positions={positions}
           organizations={organizations}
-          accounts={accounts}
+          people={people}
           canCreate={permissions.has("appointment.create")}
           canValidate={permissions.has("appointment.validate")}
           canEnd={permissions.has("appointment.end")}

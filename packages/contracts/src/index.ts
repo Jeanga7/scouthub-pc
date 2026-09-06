@@ -117,9 +117,13 @@ export const appointmentResponseSchema = z.object({
   endsAt: z.iso.datetime().nullable(),
   proposedBy: uuidSchema,
   validatedBy: uuidSchema.nullable(),
+  rejectedBy: uuidSchema.nullable(),
+  endedBy: uuidSchema.nullable(),
   proposedAt: z.iso.datetime(),
   validatedAt: z.iso.datetime().nullable(),
+  rejectedAt: z.iso.datetime().nullable(),
   endedAt: z.iso.datetime().nullable(),
+  rejectionReason: z.string().nullable(),
   notes: z.string().nullable(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
@@ -128,6 +132,20 @@ export const appointmentResponseSchema = z.object({
   scopeName: z.string().optional(),
 });
 export type AppointmentResponse = z.infer<typeof appointmentResponseSchema>;
+export const governancePersonOptionSchema = z.object({
+  id: uuidSchema,
+  tenantId: uuidSchema,
+  displayName: z.string(),
+});
+export type GovernancePersonOption = z.infer<
+  typeof governancePersonOptionSchema
+>;
+export const governancePersonSearchQuerySchema = z
+  .object({
+    tenantId: uuidSchema,
+    q: z.string().max(120).optional(),
+  })
+  .strict();
 export const proposeAppointmentRequestSchema = appointmentResponseSchema
   .pick({
     tenantId: true,

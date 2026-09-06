@@ -2,8 +2,8 @@
 import { useState, type FormEvent } from "react";
 import { Button, Card, EmptyState, Sheet, StatusBadge } from "@scouthub/ui";
 import type {
-  AccountAdministrationResponse,
   AppointmentResponse,
+  GovernancePersonOption,
   OrganizationResponse,
   PositionResponse,
 } from "@scouthub/contracts";
@@ -12,25 +12,23 @@ export function AppointmentsConsole(props: {
   initialAppointments: AppointmentResponse[];
   positions: PositionResponse[];
   organizations: OrganizationResponse[];
-  accounts: AccountAdministrationResponse[];
+  people: GovernancePersonOption[];
   canCreate: boolean;
   canValidate: boolean;
   canEnd: boolean;
 }) {
   const [appointments, setAppointments] = useState(props.initialAppointments);
+  const [people, setPeople] = useState(props.people);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const position = new Map(
     props.positions.map((item) => [item.id, item.title]),
   );
   const organization = new Map(
     props.organizations.map((item) => [item.id, item.name]),
   );
-  const person = new Map(
-    props.accounts
-      .filter((item) => item.person)
-      .map((item) => [item.person!.id, item.person!.displayName]),
-  );
+  const person = new Map(people.map((item) => [item.id, item.displayName]));
   async function refresh() {
     const response = await fetch(
       `/api/v1/governance/appointments?tenantId=${props.tenantId}`,
@@ -43,12 +41,17 @@ export function AppointmentsConsole(props: {
     else setError(body.detail ?? "Chargement impossible.");
   }
   async function decide(id: string, action: "approve" | "reject" | "end") {
+    setLoading(true);
+    const reason =
+      action === "reject"
+        ? window.prompt("Motif du rejet (facultatif)") || null
+        : null;
     const response = await fetch(
       `/api/v1/governance/appointments/${id}/${action}?tenantId=${props.tenantId}`,
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: "{}",
+        body: JSON.stringify({ reason }),
       },
     );
     const body = (await response.json()) as { detail?: string };
@@ -57,14 +60,28 @@ export function AppointmentsConsole(props: {
       setError(null);
       await refresh();
     }
+    setLoading(false);
+  }
+  async function searchPeople(query: string) {
+    const response = await fetch(
+      `/api/v1/governance/people?tenantId=${props.tenantId}&q=${encodeURIComponent(query)}`,
+    );
+    const body = (await response.json()) as {
+      data?: GovernancePersonOption[];
+      detail?: string;
+    };
+    if (body.data) setPeople(body.data);
+    else setError(body.detail ?? "Recherche impossible.");
   }
   async function propose(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setLoading(true);
     const data = new FormData(event.currentTarget);
     const startsAt = data.get("startsAt");
     const endsAt = data.get("endsAt");
     if (typeof startsAt !== "string" || typeof endsAt !== "string") {
       setError("Dates invalides.");
+      setLoading(false);
       return;
     }
     const response = await fetch("/api/v1/governance/appointments", {
@@ -81,10 +98,15 @@ export function AppointmentsConsole(props: {
       }),
     });
     const body = (await response.json()) as { detail?: string };
-    if (!response.ok) return setError(body.detail ?? "Proposition impossible.");
+    if (!response.ok) {
+      setError(body.detail ?? "Proposition impossible.");
+      setLoading(false);
+      return;
+    }
     setOpen(false);
     setError(null);
     await refresh();
+    setLoading(false);
   }
   const section = (title: string, values: AppointmentResponse[]) => (
     <section className="governance-section">
@@ -116,16 +138,25 @@ export function AppointmentsConsole(props: {
               <div className="card-actions">
                 {item.status === "PENDING" && props.canValidate ? (
                   <>
-                    <Button onClick={() => void decide(item.id, "approve")}>
+                    <Button
+                      disabled={loading}
+                      onClick={() => void decide(item.id, "approve")}
+                    >
                       Approuver
                     </Button>
-                    <Button onClick={() => void decide(item.id, "reject")}>
+                    <Button
+                      disabled={loading}
+                      onClick={() => void decide(item.id, "reject")}
+                    >
                       Rejeter
                     </Button>
                   </>
                 ) : null}
                 {item.status === "ACTIVE" && props.canEnd ? (
-                  <Button onClick={() => void decide(item.id, "end")}>
+                  <Button
+                    disabled={loading}
+                    onClick={() => void decide(item.id, "end")}
+                  >
                     Terminer
                   </Button>
                 ) : null}
@@ -175,14 +206,19 @@ export function AppointmentsConsole(props: {
           >
             <label>
               Personne
+              <input
+                type="search"
+                placeholder="Rechercher"
+                onChange={(event) =>
+                  void searchPeople(event.currentTarget.value)
+                }
+              />
               <select name="personId" required>
-                {props.accounts
-                  .filter((item) => item.person)
-                  .map((item) => (
-                    <option key={item.person!.id} value={item.person!.id}>
-                      {item.person!.displayName}
-                    </option>
-                  ))}
+                {people.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.displayName}
+                  </option>
+                ))}
               </select>
             </label>
             <label>
@@ -219,7 +255,9 @@ export function AppointmentsConsole(props: {
               Notes
               <textarea name="notes" />
             </label>
-            <Button type="submit">Proposer</Button>
+            <Button type="submit" disabled={loading}>
+              {loading ? "Envoi..." : "Proposer"}
+            </Button>
           </form>
         </Sheet>
       ) : null}

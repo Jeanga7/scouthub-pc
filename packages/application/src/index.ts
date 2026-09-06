@@ -79,6 +79,9 @@ export type {
   AppointmentRepository,
   AppointmentTransaction,
   AppointmentView,
+  GovernancePersonDirectoryRepository,
+  GovernancePersonDirectoryTransaction,
+  GovernancePersonOption,
   PositionRepository,
   PositionTransaction,
 } from "./ports/governance-repository";
@@ -130,4 +133,8 @@ export {
   type ProjectWorkflowInput,
   type UpdateProjectDraftInput,
 } from "./project/use-cases";
-export { PositionUseCases, AppointmentUseCases } from "./governance/use-cases";
+export {
+  AppointmentUseCases,
+  GovernancePersonDirectoryUseCases,
+  PositionUseCases,
+} from "./governance/use-cases";

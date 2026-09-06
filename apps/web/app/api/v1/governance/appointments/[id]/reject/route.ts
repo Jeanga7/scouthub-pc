@@ -24,7 +24,9 @@ export async function POST(
     const { tenantId } = tenantQuerySchema.parse(
       Object.fromEntries(new URL(request.url).searchParams),
     );
-    appointmentDecisionRequestSchema.parse(await request.json());
+    const decision = appointmentDecisionRequestSchema.parse(
+      await request.json(),
+    );
     const useCases = createAppointmentUseCases();
     const appointment = await useCases.getAppointment(
       tenantId,
@@ -46,7 +48,12 @@ export async function POST(
     );
     return jsonResponse(
       mapAppointment(
-        await useCases.rejectAppointment(tenantId, appointment.id),
+        await useCases.rejectAppointment(
+          tenantId,
+          appointment.id,
+          actor.account.id,
+          decision.reason ?? null,
+        ),
       ),
       rid,
     );

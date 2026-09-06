@@ -18,9 +18,13 @@ const appointment: Appointment = {
   endsAt: null,
   proposedBy: "account-1",
   validatedBy: null,
+  rejectedBy: null,
+  endedBy: null,
   proposedAt: now,
   validatedAt: null,
+  rejectedAt: null,
   endedAt: null,
+  rejectionReason: null,
   notes: null,
   createdAt: now,
   updatedAt: now,
@@ -46,6 +50,7 @@ describe("AppointmentUseCases", () => {
       list: vi.fn(),
       listViews: vi.fn(),
       update: vi.fn(),
+      transition: vi.fn(),
       activate: activateAppointment,
     };
     let transactionCalls = 0;

@@ -1,6 +1,7 @@
 import { ApplicationError, type ActorContext } from "@scouthub/application";
 import {
   appointmentResponseSchema,
+  governancePersonOptionSchema,
   positionResponseSchema,
 } from "@scouthub/contracts";
 import {
@@ -12,12 +13,13 @@ import {
   type Appointment,
   type AppointmentActor,
   type AppointmentScope,
+  type Person,
   type Position,
 } from "@scouthub/domain";
 
 function organizationScopeType(
   scopeType: string,
-): AppointmentActor["scopeTypes"][number] | null {
+): AppointmentActor["grants"][number]["scopeType"] | null {
   if (
     scopeType === "UNIT" ||
     scopeType === "GROUP" ||
@@ -42,10 +44,16 @@ export function mapAppointment(value: Appointment) {
     endsAt: value.endsAt?.toISOString() ?? null,
     proposedAt: value.proposedAt.toISOString(),
     validatedAt: value.validatedAt?.toISOString() ?? null,
+    rejectedAt: value.rejectedAt?.toISOString() ?? null,
     endedAt: value.endedAt?.toISOString() ?? null,
     createdAt: value.createdAt.toISOString(),
     updatedAt: value.updatedAt.toISOString(),
   });
+}
+export function mapGovernancePersonOption(
+  value: Pick<Person, "id" | "tenantId" | "displayName">,
+) {
+  return governancePersonOptionSchema.parse(value);
 }
 
 export function assertTenantPermission(
@@ -79,22 +87,38 @@ export function appointmentActor(
     accountId: actor.account.id,
     tenantId,
     personId: actor.person?.tenantId === tenantId ? actor.person.id : null,
-    scopePaths: assignments.map((item) => item.scopePath as string),
-    scopeTypes: assignments
-      .map((item) => organizationScopeType(item.scopeType))
-      .filter((scopeType) => scopeType !== null),
-    permissions: assignments.flatMap((item) => item.permissions),
+    grants: assignments.flatMap((item) => {
+      const scopeType = organizationScopeType(item.scopeType);
+      if (scopeType === null) return [];
+      return [
+        {
+          scopePath: item.scopePath as string,
+          scopeType,
+          permissions: item.permissions,
+        },
+      ];
+    }),
   };
 }
 export function canDirectlyActivateForActor(
   actor: ActorContext,
   position: Position,
   scope: AppointmentScope,
+  proposedPersonId: string,
 ): boolean {
   return canDirectlyActivateAppointment(
     appointmentActor(actor, scope.tenantId, "appointment.create"),
     position,
     scope,
+    proposedPersonId,
+  );
+}
+export function canSearchGovernancePeople(
+  actor: ActorContext,
+  tenantId: string,
+): boolean {
+  return (
+    appointmentActor(actor, tenantId, "appointment.create").grants.length > 0
   );
 }
 export function assertCanPropose(
@@ -145,8 +169,9 @@ export function canReadScope(
   scope: AppointmentScope,
 ): boolean {
   const current = appointmentActor(actor, scope.tenantId, "appointment.read");
-  return (
-    current.permissions.includes("appointment.read") &&
-    current.scopePaths.some((path) => scope.path.startsWith(path))
+  return current.grants.some(
+    (grant) =>
+      grant.permissions.includes("appointment.read") &&
+      scope.path.startsWith(grant.scopePath),
   );
 }

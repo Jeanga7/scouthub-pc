@@ -45,7 +45,13 @@ export async function POST(
       ),
     );
     return jsonResponse(
-      mapAppointment(await useCases.endAppointment(tenantId, appointment.id)),
+      mapAppointment(
+        await useCases.endAppointment(
+          tenantId,
+          appointment.id,
+          actor.account.id,
+        ),
+      ),
       rid,
     );
   } catch (error) {

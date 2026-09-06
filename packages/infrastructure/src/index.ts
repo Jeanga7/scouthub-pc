@@ -1,19 +1,19 @@
 export {
   createCloudflareAsyncQueueAdapter,
-  type CloudflareAsyncQueueBinding
+  type CloudflareAsyncQueueBinding,
 } from "./adapters/cloudflare-async-queue";
 export {
   createClerkIdentityProviderAdapter,
-  type ClerkSessionReader
+  type ClerkSessionReader,
 } from "./adapters/clerk-identity-provider";
 export {
   createLocalIdentityProviderAdapter,
   LOCAL_PERSONA_COOKIE,
-  type LocalIdentityPersona
+  type LocalIdentityPersona,
 } from "./adapters/local-identity-provider";
 export {
   createR2ObjectStorageAdapter,
-  type R2ObjectStorageConfig
+  type R2ObjectStorageConfig,
 } from "./adapters/r2-object-storage";
 export {
   createLocalObjectStorageAdapter,
@@ -21,16 +21,20 @@ export {
   getLocalObject,
   localEtagFor,
   putLocalObject,
-  type LocalObjectStorageConfig
+  type LocalObjectStorageConfig,
 } from "./adapters/local-object-storage";
 export type { DatabaseConnection } from "./database/connection";
 export { createPgOrganizationRepository } from "./database/organization-repository";
 export { createPgIdentityRepository } from "./database/identity-repository";
 export { createPgProjectRepository } from "./database/project-repository";
 export { createPgEvidenceRepository } from "./database/evidence-repository";
-export { createPgPositionRepository, createPgAppointmentRepository } from "./database/governance-repository";
+export {
+  createPgAppointmentRepository,
+  createPgGovernancePersonDirectoryRepository,
+  createPgPositionRepository,
+} from "./database/governance-repository";
 export {
   createPgOutboxRepository,
   PgOutboxRepository,
-  PgOutboxTransaction
+  PgOutboxTransaction,
 } from "./database/outbox-repository";

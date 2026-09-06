@@ -7,6 +7,7 @@ import {
   isAppointmentCurrentlyActive,
   isAppointmentEffectiveAt,
   type Appointment,
+  type AppointmentActor,
   type Position,
 } from "./governance";
 
@@ -14,14 +15,16 @@ const districtPath = "/nso/region/district-x/";
 const actor = (
   scopePaths: string[],
   permissions: string[],
-  overrides = {},
-) => ({
+  overrides: Partial<AppointmentActor> = {},
+): AppointmentActor => ({
   accountId: "validator",
   tenantId: "t",
   personId: "validator-person",
-  scopePaths,
-  permissions,
-  scopeTypes: ["DISTRICT" as const],
+  grants: scopePaths.map((scopePath) => ({
+    scopePath,
+    scopeType: "DISTRICT" as const,
+    permissions,
+  })),
   ...overrides,
 });
 const scope = (
@@ -56,6 +59,10 @@ const appointment: Appointment = {
   validatedBy: null,
   proposedAt: new Date(0),
   validatedAt: null,
+  rejectedBy: null,
+  rejectedAt: null,
+  rejectionReason: null,
+  endedBy: null,
   endedAt: null,
   notes: null,
   createdAt: new Date(0),
@@ -198,23 +205,98 @@ describe("appointment hierarchy policy", () => {
       ),
     ).toBe(expected);
   });
+  it("stops being historically effective after manual end boundary", () => {
+    const ended = {
+      ...appointment,
+      status: "ENDED" as const,
+      startsAt: new Date("2027-01-01T00:00:00Z"),
+      endsAt: new Date("2027-02-01T00:00:00Z"),
+      validatedAt: new Date("2027-01-01T00:00:00Z"),
+      endedAt: new Date("2027-02-01T00:00:00Z"),
+    };
+    expect(
+      isAppointmentEffectiveAt(ended, new Date("2027-01-15T00:00:00Z")),
+    ).toBe(true);
+    expect(
+      isAppointmentEffectiveAt(ended, new Date("2027-02-02T00:00:00Z")),
+    ).toBe(false);
+  });
   it("allows direct activation only for group authority on subordinate units", () => {
     const groupActor = actor(
       [`${districtPath}group-a/`],
       ["appointment.create"],
       {
-        scopeTypes: ["GROUP"],
+        grants: [
+          {
+            scopePath: `${districtPath}group-a/`,
+            scopeType: "GROUP",
+            permissions: ["appointment.create"],
+          },
+        ],
       },
     );
     const unit = scope("unit-a", `${districtPath}group-a/unit-a/`, "UNIT");
-    expect(canDirectlyActivateAppointment(groupActor, position, unit)).toBe(
-      true,
-    );
+    expect(
+      canDirectlyActivateAppointment(groupActor, position, unit, "person"),
+    ).toBe(true);
+    expect(
+      canDirectlyActivateAppointment(
+        groupActor,
+        position,
+        scope("annex-a", `${districtPath}group-a/annex-a/`, "ANNEX"),
+        "person",
+      ),
+    ).toBe(true);
     expect(
       canDirectlyActivateAppointment(
         groupActor,
         position,
         scope("group-a", `${districtPath}group-a/`),
+        "person",
+      ),
+    ).toBe(false);
+  });
+  it("denies direct activation when group type and covering path come from different grants", () => {
+    const mixedActor = actor([], ["appointment.create"], {
+      grants: [
+        {
+          scopePath: `${districtPath}group-a/`,
+          scopeType: "GROUP",
+          permissions: ["appointment.create"],
+        },
+        {
+          scopePath: "/nso/region/district-y/",
+          scopeType: "DISTRICT",
+          permissions: ["appointment.create"],
+        },
+      ],
+    });
+    expect(
+      canDirectlyActivateAppointment(
+        mixedActor,
+        position,
+        scope("unit-b", "/nso/region/district-y/group-b/unit-b/", "UNIT"),
+        "person",
+      ),
+    ).toBe(false);
+  });
+  it("denies self direct appointment", () => {
+    const groupActor = actor([], ["appointment.create"], {
+      personId: "person",
+      grants: [
+        {
+          scopePath: `${districtPath}group-a/`,
+          scopeType: "GROUP",
+          permissions: ["appointment.create"],
+        },
+      ],
+    });
+    expect(
+      canDirectlyActivateAppointment(
+        groupActor,
+        position,
+        scope("unit-a", `${districtPath}group-a/unit-a/`, "UNIT"),
+        "person",
       ),
     ).toBe(false);
   });

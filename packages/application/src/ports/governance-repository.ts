@@ -8,6 +8,11 @@ export interface AppointmentView extends Appointment {
   readonly positionTitle: string;
   readonly scopeName: string;
 }
+export interface GovernancePersonOption {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly displayName: string;
+}
 
 export interface PositionRepository {
   transaction<TResult>(
@@ -42,10 +47,30 @@ export interface AppointmentTransaction {
     id: string,
     patch: Partial<Appointment>,
   ): Promise<Appointment | null>;
+  transition(
+    tenantId: string,
+    id: string,
+    expectedStatus: AppointmentStatus,
+    newStatus: AppointmentStatus,
+    patch: Partial<Appointment>,
+  ): Promise<Appointment | null>;
   activate(
     tenantId: string,
     id: string,
     validatedBy: string,
     validatedAt: Date,
   ): Promise<Appointment | null>;
+}
+export interface GovernancePersonDirectoryRepository {
+  transaction<TResult>(
+    handler: (
+      transaction: GovernancePersonDirectoryTransaction,
+    ) => Promise<TResult>,
+  ): Promise<TResult>;
+}
+export interface GovernancePersonDirectoryTransaction {
+  searchPeople(
+    tenantId: string,
+    query: string | null,
+  ): Promise<GovernancePersonOption[]>;
 }
