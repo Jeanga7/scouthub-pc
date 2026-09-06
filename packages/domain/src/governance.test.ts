@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   canEndAppointment,
+  canDirectlyActivateAppointment,
   canProposeAppointment,
   canValidateAppointment,
-  isAppointmentActiveAt,
+  isAppointmentCurrentlyActive,
+  isAppointmentEffectiveAt,
   type Appointment,
   type Position,
 } from "./governance";
@@ -19,6 +21,7 @@ const actor = (
   personId: "validator-person",
   scopePaths,
   permissions,
+  scopeTypes: ["DISTRICT" as const],
   ...overrides,
 });
 const scope = (
@@ -155,12 +158,63 @@ describe("appointment hierarchy policy", () => {
     ).toBe(false);
   });
   it("evaluates active dates", () => {
-    const active = { ...appointment, status: "ACTIVE" as const };
-    expect(isAppointmentActiveAt(active, new Date("2027-02-01"))).toBe(true);
+    const active = {
+      ...appointment,
+      status: "ACTIVE" as const,
+      validatedAt: new Date("2027-01-01"),
+    };
+    expect(isAppointmentCurrentlyActive(active, new Date("2027-02-01"))).toBe(
+      true,
+    );
     expect(
-      isAppointmentActiveAt(
+      isAppointmentCurrentlyActive(
         { ...active, endsAt: new Date("2027-01-15") },
         new Date("2027-02-01"),
+      ),
+    ).toBe(false);
+  });
+  it.each([
+    ["ACTIVE in interval", "ACTIVE", "2027-02-01", null, true],
+    ["before starts", "ACTIVE", "2026-12-01", null, false],
+    ["after ends", "ACTIVE", "2027-03-01", "2027-02-15", false],
+    ["ENDED historical interval", "ENDED", "2027-02-01", "2027-02-15", true],
+    ["ENDED after interval", "ENDED", "2027-03-01", "2027-02-15", false],
+    ["REJECTED", "REJECTED", "2027-02-01", "2027-02-15", false],
+    ["PENDING", "PENDING", "2027-02-01", "2027-02-15", false],
+  ] as const)("effectiveAt: %s", (_label, status, date, ends, expected) => {
+    expect(
+      isAppointmentEffectiveAt(
+        {
+          ...appointment,
+          status,
+          startsAt: new Date("2027-01-01"),
+          endsAt: ends ? new Date(ends) : null,
+          validatedAt:
+            status === "ACTIVE" || status === "ENDED"
+              ? new Date("2027-01-01")
+              : null,
+        },
+        new Date(date),
+      ),
+    ).toBe(expected);
+  });
+  it("allows direct activation only for group authority on subordinate units", () => {
+    const groupActor = actor(
+      [`${districtPath}group-a/`],
+      ["appointment.create"],
+      {
+        scopeTypes: ["GROUP"],
+      },
+    );
+    const unit = scope("unit-a", `${districtPath}group-a/unit-a/`, "UNIT");
+    expect(canDirectlyActivateAppointment(groupActor, position, unit)).toBe(
+      true,
+    );
+    expect(
+      canDirectlyActivateAppointment(
+        groupActor,
+        position,
+        scope("group-a", `${districtPath}group-a/`),
       ),
     ).toBe(false);
   });

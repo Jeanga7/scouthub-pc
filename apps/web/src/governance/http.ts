@@ -5,6 +5,7 @@ import {
 } from "@scouthub/contracts";
 import {
   canEndAppointment,
+  canDirectlyActivateAppointment,
   canProposeAppointment,
   canValidateAppointment,
   isRoleAssignmentActive,
@@ -13,6 +14,19 @@ import {
   type AppointmentScope,
   type Position,
 } from "@scouthub/domain";
+
+function organizationScopeType(
+  scopeType: string,
+): AppointmentActor["scopeTypes"][number] | null {
+  if (
+    scopeType === "UNIT" ||
+    scopeType === "GROUP" ||
+    scopeType === "DISTRICT" ||
+    scopeType === "REGION"
+  )
+    return scopeType;
+  return null;
+}
 
 export function mapPosition(value: Position) {
   return positionResponseSchema.parse({
@@ -66,8 +80,22 @@ export function appointmentActor(
     tenantId,
     personId: actor.person?.tenantId === tenantId ? actor.person.id : null,
     scopePaths: assignments.map((item) => item.scopePath as string),
+    scopeTypes: assignments
+      .map((item) => organizationScopeType(item.scopeType))
+      .filter((scopeType) => scopeType !== null),
     permissions: assignments.flatMap((item) => item.permissions),
   };
+}
+export function canDirectlyActivateForActor(
+  actor: ActorContext,
+  position: Position,
+  scope: AppointmentScope,
+): boolean {
+  return canDirectlyActivateAppointment(
+    appointmentActor(actor, scope.tenantId, "appointment.create"),
+    position,
+    scope,
+  );
 }
 export function assertCanPropose(
   actor: ActorContext,

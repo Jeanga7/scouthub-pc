@@ -45,6 +45,7 @@ export interface AppointmentActor {
   readonly tenantId: string;
   readonly personId: string | null;
   readonly scopePaths: readonly string[];
+  readonly scopeTypes: readonly OrganizationType[];
   readonly permissions: readonly string[];
 }
 export interface AppointmentScope {
@@ -76,6 +77,18 @@ export function canProposeAppointment(
     position.allowedScopeTypes.includes(scope.type)
   );
 }
+/** Final local authority may activate subordinate unit/annex appointments directly. */
+export function canDirectlyActivateAppointment(
+  actor: AppointmentActor,
+  position: Position,
+  scope: AppointmentScope,
+): boolean {
+  return (
+    canProposeAppointment(actor, position, scope) &&
+    actor.scopeTypes.includes("GROUP") &&
+    (scope.type === "UNIT" || scope.type === "ANNEX")
+  );
+}
 export function canValidateAppointment(
   actor: AppointmentActor,
   appointment: Appointment,
@@ -105,9 +118,9 @@ export function canEndAppointment(
     coversScope(actor, scope)
   );
 }
-export function isAppointmentActiveAt(
+export function isAppointmentCurrentlyActive(
   appointment: Appointment,
-  at: Date,
+  at = new Date(),
 ): boolean {
   return (
     appointment.status === "ACTIVE" &&
@@ -115,3 +128,18 @@ export function isAppointmentActiveAt(
     (appointment.endsAt === null || appointment.endsAt > at)
   );
 }
+
+export function isAppointmentEffectiveAt(
+  appointment: Appointment,
+  at: Date,
+): boolean {
+  return (
+    (appointment.status === "ACTIVE" || appointment.status === "ENDED") &&
+    appointment.validatedAt !== null &&
+    appointment.startsAt <= at &&
+    (appointment.endsAt === null || appointment.endsAt > at)
+  );
+}
+
+/** @deprecated Use isAppointmentCurrentlyActive for current state checks. */
+export const isAppointmentActiveAt = isAppointmentCurrentlyActive;

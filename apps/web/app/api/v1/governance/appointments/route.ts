@@ -11,6 +11,7 @@ import {
 import { requireActor } from "@/identity/http";
 import {
   assertCanPropose,
+  canDirectlyActivateForActor,
   canReadScope,
   mapAppointment,
 } from "@/governance/http";
@@ -66,24 +67,30 @@ export async function POST(request: Request) {
       );
     assertCanPropose(actor, position, scope);
     const now = new Date();
-    const value = await createAppointmentUseCases().proposeAppointment({
-      id: crypto.randomUUID(),
-      tenantId: payload.tenantId,
-      personId: payload.personId,
-      positionId: payload.positionId,
-      scopeOrgId: payload.scopeOrgId,
-      status: "PENDING",
-      startsAt: new Date(payload.startsAt),
-      endsAt: payload.endsAt ? new Date(payload.endsAt) : null,
-      proposedBy: actor.account.id,
-      validatedBy: null,
-      proposedAt: now,
-      validatedAt: null,
-      endedAt: null,
-      notes: payload.notes ?? null,
-      createdAt: now,
-      updatedAt: now,
-    });
+    const value = await createAppointmentUseCases().proposeAppointment(
+      {
+        id: crypto.randomUUID(),
+        tenantId: payload.tenantId,
+        personId: payload.personId,
+        positionId: payload.positionId,
+        scopeOrgId: payload.scopeOrgId,
+        status: "PENDING",
+        startsAt: new Date(payload.startsAt),
+        endsAt: payload.endsAt ? new Date(payload.endsAt) : null,
+        proposedBy: actor.account.id,
+        validatedBy: null,
+        proposedAt: now,
+        validatedAt: null,
+        endedAt: null,
+        notes: payload.notes ?? null,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        directActivate: canDirectlyActivateForActor(actor, position, scope),
+        validatedBy: actor.account.id,
+      },
+    );
     return jsonResponse(mapAppointment(value), rid, { status: 201 });
   } catch (error) {
     return handleRouteError(error, rid);

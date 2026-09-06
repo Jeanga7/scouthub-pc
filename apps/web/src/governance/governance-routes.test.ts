@@ -1,6 +1,10 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { ApplicationError } from "@scouthub/application";
 import type { ActorContext } from "@scouthub/application";
+import type {
+  AppointmentResponse,
+  PositionResponse,
+} from "@scouthub/contracts";
 vi.mock("@/identity/http", () => ({ requireActor: vi.fn() }));
 vi.mock("@/governance/service", () => ({
   createPositionUseCases: vi.fn(),
@@ -19,7 +23,11 @@ import {
   GET as GET_POSITIONS,
   POST as POST_POSITION,
 } from "../../app/api/v1/governance/positions/route";
+import { PATCH as PATCH_POSITION } from "../../app/api/v1/governance/positions/[id]/route";
+import { POST as POST_APPOINTMENT } from "../../app/api/v1/governance/appointments/route";
 import { POST as APPROVE } from "../../app/api/v1/governance/appointments/[id]/approve/route";
+
+type ApiEnvelope<T> = { data: T };
 
 const tenantId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
 const regionId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2";
@@ -31,6 +39,7 @@ const now = new Date("2026-09-05T00:00:00Z");
 const actor = (
   permissions: string[],
   person = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa7",
+  assignmentOverrides: Partial<ActorContext["assignments"][number]> = {},
 ): ActorContext => ({
   account: {
     id: accountId,
@@ -71,6 +80,7 @@ const actor = (
       grantedByAccountId: accountId,
       grantedAt: now,
       revokedAt: null,
+      ...assignmentOverrides,
     },
   ],
 });
@@ -128,6 +138,35 @@ beforeEach(() => {
   } as never);
 });
 describe("Governance API routes", () => {
+  it("deactivates a position through PATCH and persists active=false", async () => {
+    let persisted = { ...position, active: true };
+    vi.mocked(requireActor).mockResolvedValue(actor(["position.manage"]));
+    const updatePosition = vi.fn(
+      (_tenant: string, _id: string, patch: Partial<typeof position>) => {
+        persisted = { ...persisted, ...patch };
+        return Promise.resolve(persisted);
+      },
+    );
+    vi.mocked(createPositionUseCases).mockReturnValue({
+      getPosition: vi.fn().mockResolvedValue(persisted),
+      updatePosition,
+    } as never);
+    const response = await PATCH_POSITION(
+      new Request(
+        `http://localhost/api/v1/governance/positions/${positionId}?tenantId=${tenantId}`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ active: false }),
+        },
+      ),
+      { params: Promise.resolve({ id: positionId }) },
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as ApiEnvelope<PositionResponse>;
+    expect(body.data.active).toBe(false);
+    expect(persisted.active).toBe(false);
+  });
   it("requires authentication", async () => {
     vi.mocked(requireActor).mockRejectedValue(
       new ApplicationError("Authentication required.", "AUTH_REQUIRED", 401),
@@ -175,6 +214,58 @@ describe("Governance API routes", () => {
       ),
     );
     expect(response.status).toBe(201);
+  });
+  it("directly activates a subordinate unit appointment through policy", async () => {
+    const groupId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9";
+    const unitId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa10";
+    const directAppointment = { ...appointment, scopeOrgId: unitId };
+    const proposeAppointment = vi
+      .fn()
+      .mockResolvedValue({ ...directAppointment, status: "ACTIVE" as const });
+    vi.mocked(requireActor).mockResolvedValue(
+      actor(["appointment.create"], undefined, {
+        scopeType: "GROUP",
+        scopeOrgId: groupId,
+        scopePath: `/${tenantId}/${regionId}/${groupId}/`,
+      }),
+    );
+    vi.mocked(createPositionUseCases).mockReturnValue({
+      getPosition: vi.fn().mockResolvedValue({
+        ...position,
+        allowedScopeTypes: ["UNIT"],
+      }),
+    } as never);
+    vi.mocked(createOrganizationUseCases).mockReturnValue({
+      getOrganization: vi.fn().mockResolvedValue({
+        id: unitId,
+        tenantId,
+        type: "UNIT",
+        path: `/${tenantId}/${regionId}/${groupId}/${unitId}/`,
+      }),
+    } as never);
+    vi.mocked(createAppointmentUseCases).mockReturnValue({
+      proposeAppointment,
+    } as never);
+    const response = await POST_APPOINTMENT(
+      new Request("http://localhost/api/v1/governance/appointments", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          tenantId,
+          personId,
+          positionId,
+          scopeOrgId: unitId,
+          startsAt: now.toISOString(),
+        }),
+      }),
+    );
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as ApiEnvelope<AppointmentResponse>;
+    expect(body.data.status).toBe("ACTIVE");
+    expect(proposeAppointment.mock.calls[0]?.[1]).toMatchObject({
+      directActivate: true,
+      validatedBy: accountId,
+    });
   });
   it("prevents the nominated person from self-validating", async () => {
     vi.mocked(requireActor).mockResolvedValue(

@@ -30,8 +30,27 @@ export class PositionUseCases {
 }
 export class AppointmentUseCases {
   constructor(private readonly repository: AppointmentRepository) {}
-  proposeAppointment(value: Appointment) {
-    return this.repository.transaction((tx) => tx.create(value));
+  proposeAppointment(
+    value: Appointment,
+    options: { directActivate?: boolean; validatedBy?: string } = {},
+  ) {
+    return this.repository.transaction(async (tx) => {
+      const created = await tx.create(value);
+      if (!options.directActivate) return created;
+      const activated = await tx.activate(
+        value.tenantId,
+        value.id,
+        options.validatedBy ?? value.proposedBy,
+        new Date(),
+      );
+      if (activated === null)
+        throw new ApplicationError(
+          "Activation directe impossible.",
+          "APPOINTMENT_INVALID_STATE",
+          409,
+        );
+      return activated;
+    });
   }
   getAppointment(tenantId: string, id: string) {
     return this.repository.transaction((tx) => tx.findById(tenantId, id));
