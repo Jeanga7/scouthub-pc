@@ -1,6 +1,7 @@
 import {
   check,
   bigint,
+  boolean,
   foreignKey,
   index,
   integer,
@@ -12,7 +13,7 @@ import {
   timestamp,
   unique,
   uniqueIndex,
-  uuid
+  uuid,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -20,7 +21,7 @@ export const outboxEventStatus = pgEnum("outbox_event_status", [
   "PENDING",
   "PROCESSING",
   "SENT",
-  "FAILED"
+  "FAILED",
 ]);
 
 export const outboxEvents = pgTable(
@@ -37,29 +38,35 @@ export const outboxEvents = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
-    processedAt: timestamp("processed_at", { withTimezone: true })
+    processedAt: timestamp("processed_at", { withTimezone: true }),
   },
   (table) => [
     index("outbox_events_tenant_idx").on(table.tenantId),
     // Drives the dispatcher claim: oldest PENDING rows first.
-    index("outbox_events_status_created_at_idx").on(table.status, table.createdAt),
-    index("outbox_events_aggregate_idx").on(table.aggregateType, table.aggregateId),
+    index("outbox_events_status_created_at_idx").on(
+      table.status,
+      table.createdAt,
+    ),
+    index("outbox_events_aggregate_idx").on(
+      table.aggregateType,
+      table.aggregateId,
+    ),
     check("outbox_events_attempts_non_negative", sql`${table.attempts} >= 0`),
     check(
       "outbox_events_aggregate_type_lowercase",
-      sql`${table.aggregateType} ~ '^[a-z][a-z0-9_]*$'`
+      sql`${table.aggregateType} ~ '^[a-z][a-z0-9_]*$'`,
     ),
     check(
       "outbox_events_event_type_shape",
-      sql`${table.eventType} ~ '^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$'`
+      sql`${table.eventType} ~ '^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$'`,
     ),
     // PENDING and PROCESSING have not been settled yet; SENT and FAILED have.
     check(
       "outbox_events_processed_at_shape",
       sql`(${table.status} IN ('PENDING', 'PROCESSING') AND ${table.processedAt} IS NULL)
-          OR (${table.status} IN ('SENT', 'FAILED') AND ${table.processedAt} IS NOT NULL)`
-    )
-  ]
+          OR (${table.status} IN ('SENT', 'FAILED') AND ${table.processedAt} IS NOT NULL)`,
+    ),
+  ],
 );
 
 export const organizationType = pgEnum("organization_type", [
@@ -69,12 +76,12 @@ export const organizationType = pgEnum("organization_type", [
   "GROUP",
   "ANNEX",
   "UNIT",
-  "TEAM"
+  "TEAM",
 ]);
 
 export const organizationStatus = pgEnum("organization_status", [
   "DRAFT",
-  "ACTIVE"
+  "ACTIVE",
 ]);
 
 export const organization = pgTable(
@@ -99,7 +106,7 @@ export const organization = pgTable(
       .defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
-      .defaultNow()
+      .defaultNow(),
   },
   (table) => [
     primaryKey({ columns: [table.id] }),
@@ -108,13 +115,15 @@ export const organization = pgTable(
     foreignKey({
       columns: [table.parentId, table.tenantId],
       foreignColumns: [table.id, table.tenantId],
-      name: "organization_parent_same_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "organization_parent_same_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     index("organization_tenant_idx").on(table.tenantId),
     index("organization_parent_idx").on(table.tenantId, table.parentId),
     index("organization_path_idx").on(
       table.tenantId,
-      table.path.op("text_pattern_ops")
+      table.path.op("text_pattern_ops"),
     ),
     index("organization_type_idx").on(table.tenantId, table.type),
     index("organization_status_idx").on(table.tenantId, table.status),
@@ -124,23 +133,23 @@ export const organization = pgTable(
     check("organization_code_not_empty", sql`length(btrim(${table.code})) > 0`),
     check(
       "organization_active_period_valid",
-      sql`${table.activeUntil} IS NULL OR ${table.activeFrom} IS NULL OR ${table.activeUntil} >= ${table.activeFrom}`
+      sql`${table.activeUntil} IS NULL OR ${table.activeFrom} IS NULL OR ${table.activeUntil} >= ${table.activeFrom}`,
     ),
     check(
       "organization_root_parent_valid",
-      sql`(${table.type} = 'NSO' AND ${table.parentId} IS NULL AND ${table.id} = ${table.tenantId} AND ${table.depth} = 0) OR (${table.type} <> 'NSO' AND ${table.parentId} IS NOT NULL)`
+      sql`(${table.type} = 'NSO' AND ${table.parentId} IS NULL AND ${table.id} = ${table.tenantId} AND ${table.depth} = 0) OR (${table.type} <> 'NSO' AND ${table.parentId} IS NOT NULL)`,
     ),
     check(
       "organization_parent_not_self",
-      sql`${table.parentId} IS NULL OR ${table.parentId} <> ${table.id}`
-    )
-  ]
+      sql`${table.parentId} IS NULL OR ${table.parentId} <> ${table.id}`,
+    ),
+  ],
 );
 
 export const auditActorKind = pgEnum("audit_actor_kind", [
   "SYSTEM",
   "USER",
-  "SERVICE"
+  "SERVICE",
 ]);
 
 export const auditEvent = pgTable(
@@ -157,17 +166,17 @@ export const auditEvent = pgTable(
     metadata: jsonb("metadata").notNull().default({}),
     occurredAt: timestamp("occurred_at", { withTimezone: true })
       .notNull()
-      .defaultNow()
+      .defaultNow(),
   },
   (table) => [
     index("audit_event_tenant_resource_idx").on(
       table.tenantId,
       table.resourceType,
       table.resourceId,
-      table.occurredAt
+      table.occurredAt,
     ),
-    index("audit_event_tenant_action_idx").on(table.tenantId, table.action)
-  ]
+    index("audit_event_tenant_action_idx").on(table.tenantId, table.action),
+  ],
 );
 
 export const accountStatus = pgEnum("account_status", [
@@ -175,7 +184,7 @@ export const accountStatus = pgEnum("account_status", [
   "ACTIVE",
   "SUSPENDED",
   "DISABLED",
-  "ANONYMIZED"
+  "ANONYMIZED",
 ]);
 
 export const personClassification = pgEnum("person_classification", ["P2"]);
@@ -183,8 +192,16 @@ export const personClassification = pgEnum("person_classification", ["P2"]);
 export const personStatus = pgEnum("person_status", [
   "ACTIVE",
   "INACTIVE",
-  "ANONYMIZED"
+  "ANONYMIZED",
 ]);
+
+export const appointmentStatus = pgEnum("appointment_status", [
+  "PENDING",
+  "ACTIVE",
+  "REJECTED",
+  "ENDED",
+]);
+export const holderPolicy = pgEnum("holder_policy", ["SINGLE", "MULTIPLE"]);
 
 export const accountInvitationStatus = pgEnum("account_invitation_status", [
   "CREATING",
@@ -192,7 +209,7 @@ export const accountInvitationStatus = pgEnum("account_invitation_status", [
   "ACCEPTED",
   "REVOKED",
   "EXPIRED",
-  "FAILED"
+  "FAILED",
 ]);
 
 export const roleScopeType = pgEnum("role_scope_type", [
@@ -202,12 +219,12 @@ export const roleScopeType = pgEnum("role_scope_type", [
   "DISTRICT",
   "REGION",
   "NATIONAL",
-  "GLOBAL_TECH"
+  "GLOBAL_TECH",
 ]);
 
 export const projectMode = pgEnum("project_mode", [
   "PLANNED",
-  "ALREADY_COMPLETED"
+  "ALREADY_COMPLETED",
 ]);
 
 export const projectStatus = pgEnum("project_status", [
@@ -228,7 +245,7 @@ export const projectStatus = pgEnum("project_status", [
   "CLOSED",
   "CANCELLED",
   "REJECTED",
-  "ARCHIVED"
+  "ARCHIVED",
 ]);
 
 export const projectVisibility = pgEnum("project_visibility", [
@@ -237,7 +254,7 @@ export const projectVisibility = pgEnum("project_visibility", [
   "REVIEW_PUBLIC",
   "PUBLIC",
   "UNPUBLISHED",
-  "ARCHIVED"
+  "ARCHIVED",
 ]);
 
 export const approvalRequestStatus = pgEnum("approval_request_status", [
@@ -245,36 +262,34 @@ export const approvalRequestStatus = pgEnum("approval_request_status", [
   "APPROVED",
   "CHANGES_REQUESTED",
   "REJECTED",
-  "CANCELLED"
+  "CANCELLED",
 ]);
 
 export const approvalDecision = pgEnum("approval_decision_type", [
   "APPROVED",
   "CHANGES_REQUESTED",
-  "REJECTED"
+  "REJECTED",
 ]);
 
 export const projectCommentKind = pgEnum("project_comment_kind", [
   "GLOBAL",
-  "FIELD"
+  "FIELD",
 ]);
 
 export const evidenceClassification = pgEnum("evidence_classification", [
   "P1",
   "P2",
-  "P3"
+  "P3",
 ]);
 
 export const mediaUploadStatus = pgEnum("media_upload_status", [
   "PENDING_UPLOAD",
   "VERIFYING",
   "VERIFIED",
-  "REJECTED"
+  "REJECTED",
 ]);
 
-export const mediaScanStatus = pgEnum("media_scan_status", [
-  "NOT_SCANNED"
-]);
+export const mediaScanStatus = pgEnum("media_scan_status", ["NOT_SCANNED"]);
 
 export const evidenceType = pgEnum("evidence_type", [
   "PHOTO",
@@ -287,18 +302,18 @@ export const evidenceType = pgEnum("evidence_type", [
   "TESTIMONIAL",
   "YOUTH_OUTPUT",
   "RECEIPT",
-  "EXTERNAL_CAPTURE"
+  "EXTERNAL_CAPTURE",
 ]);
 
 export const evidenceVisibility = pgEnum("evidence_visibility", [
   "PRIVATE",
-  "INTERNAL"
+  "INTERNAL",
 ]);
 
 export const evidenceValidationStatus = pgEnum("evidence_validation_status", [
   "UNREVIEWED",
   "VALIDATED",
-  "REJECTED"
+  "REJECTED",
 ]);
 
 export const account = pgTable(
@@ -315,7 +330,7 @@ export const account = pgTable(
       .defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
-      .defaultNow()
+      .defaultNow(),
   },
   (table) => [
     uniqueIndex("account_external_identity_unique")
@@ -323,8 +338,11 @@ export const account = pgTable(
       .where(sql`${table.externalIdentityId} IS NOT NULL`),
     index("account_primary_email_idx").on(table.primaryEmail),
     index("account_status_idx").on(table.status),
-    check("account_primary_email_not_empty", sql`length(btrim(${table.primaryEmail})) > 0`)
-  ]
+    check(
+      "account_primary_email_not_empty",
+      sql`length(btrim(${table.primaryEmail})) > 0`,
+    ),
+  ],
 );
 
 export const person = pgTable(
@@ -336,27 +354,40 @@ export const person = pgTable(
     lastName: text("last_name").notNull(),
     displayName: text("display_name").notNull(),
     birthDate: timestamp("birth_date", { withTimezone: true }),
-    classification: personClassification("classification").notNull().default("P2"),
+    classification: personClassification("classification")
+      .notNull()
+      .default("P2"),
     status: personStatus("status").notNull().default("ACTIVE"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
-      .defaultNow()
+      .defaultNow(),
   },
   (table) => [
     unique("person_id_tenant_unique").on(table.id, table.tenantId),
     foreignKey({
       columns: [table.tenantId],
       foreignColumns: [organization.id],
-      name: "person_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "person_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     index("person_tenant_idx").on(table.tenantId),
-    check("person_first_name_not_empty", sql`length(btrim(${table.firstName})) > 0`),
-    check("person_last_name_not_empty", sql`length(btrim(${table.lastName})) > 0`),
-    check("person_display_name_not_empty", sql`length(btrim(${table.displayName})) > 0`)
-  ]
+    check(
+      "person_first_name_not_empty",
+      sql`length(btrim(${table.firstName})) > 0`,
+    ),
+    check(
+      "person_last_name_not_empty",
+      sql`length(btrim(${table.lastName})) > 0`,
+    ),
+    check(
+      "person_display_name_not_empty",
+      sql`length(btrim(${table.displayName})) > 0`,
+    ),
+  ],
 );
 
 export const accountPersonLink = pgTable(
@@ -367,7 +398,7 @@ export const accountPersonLink = pgTable(
     personId: uuid("person_id").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
-      .defaultNow()
+      .defaultNow(),
   },
   (table) => [
     primaryKey({ columns: [table.accountId, table.tenantId] }),
@@ -375,29 +406,37 @@ export const accountPersonLink = pgTable(
     unique("account_person_link_account_tenant_person_unique").on(
       table.accountId,
       table.tenantId,
-      table.personId
+      table.personId,
     ),
     foreignKey({
       columns: [table.accountId],
       foreignColumns: [account.id],
-      name: "account_person_link_account_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "account_person_link_account_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.personId],
       foreignColumns: [person.id],
-      name: "account_person_link_person_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "account_person_link_person_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.personId, table.tenantId],
       foreignColumns: [person.id, person.tenantId],
-      name: "account_person_link_person_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "account_person_link_person_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.tenantId],
       foreignColumns: [organization.id],
-      name: "account_person_link_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict")
-  ]
+      name: "account_person_link_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
+  ],
 );
 
 export const roleDefinition = pgTable(
@@ -410,12 +449,15 @@ export const roleDefinition = pgTable(
     isSystem: integer("is_system").notNull().default(1),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
-      .defaultNow()
+      .defaultNow(),
   },
   (table) => [
     unique("role_definition_code_unique").on(table.code),
-    check("role_definition_code_not_empty", sql`length(btrim(${table.code})) > 0`)
-  ]
+    check(
+      "role_definition_code_not_empty",
+      sql`length(btrim(${table.code})) > 0`,
+    ),
+  ],
 );
 
 export const permissionDefinition = pgTable(
@@ -426,12 +468,15 @@ export const permissionDefinition = pgTable(
     description: text("description").notNull().default(""),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
-      .defaultNow()
+      .defaultNow(),
   },
   (table) => [
     unique("permission_definition_code_unique").on(table.code),
-    check("permission_definition_code_not_empty", sql`length(btrim(${table.code})) > 0`)
-  ]
+    check(
+      "permission_definition_code_not_empty",
+      sql`length(btrim(${table.code})) > 0`,
+    ),
+  ],
 );
 
 export const rolePermission = pgTable(
@@ -441,21 +486,25 @@ export const rolePermission = pgTable(
     permissionId: uuid("permission_id").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
-      .defaultNow()
+      .defaultNow(),
   },
   (table) => [
     primaryKey({ columns: [table.roleId, table.permissionId] }),
     foreignKey({
       columns: [table.roleId],
       foreignColumns: [roleDefinition.id],
-      name: "role_permission_role_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "role_permission_role_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.permissionId],
       foreignColumns: [permissionDefinition.id],
-      name: "role_permission_permission_fk"
-    }).onDelete("restrict").onUpdate("restrict")
-  ]
+      name: "role_permission_permission_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
+  ],
 );
 
 export const roleAssignment = pgTable(
@@ -470,68 +519,87 @@ export const roleAssignment = pgTable(
     startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
     endsAt: timestamp("ends_at", { withTimezone: true }),
     grantedByAccountId: uuid("granted_by_account_id"),
-    grantedAt: timestamp("granted_at", { withTimezone: true }).notNull().defaultNow(),
+    grantedAt: timestamp("granted_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
     revokedByAccountId: uuid("revoked_by_account_id"),
     revocationReason: text("revocation_reason"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
-      .defaultNow()
+      .defaultNow(),
   },
   (table) => [
     foreignKey({
       columns: [table.tenantId],
       foreignColumns: [organization.id],
-      name: "role_assignment_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "role_assignment_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.accountId],
       foreignColumns: [account.id],
-      name: "role_assignment_account_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "role_assignment_account_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.accountId, table.tenantId],
       foreignColumns: [accountPersonLink.accountId, accountPersonLink.tenantId],
-      name: "role_assignment_account_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "role_assignment_account_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.roleId],
       foreignColumns: [roleDefinition.id],
-      name: "role_assignment_role_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "role_assignment_role_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.scopeOrgId, table.tenantId],
       foreignColumns: [organization.id, organization.tenantId],
-      name: "role_assignment_scope_org_same_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "role_assignment_scope_org_same_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.grantedByAccountId, table.tenantId],
       foreignColumns: [accountPersonLink.accountId, accountPersonLink.tenantId],
-      name: "role_assignment_granted_by_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "role_assignment_granted_by_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.revokedByAccountId, table.tenantId],
       foreignColumns: [accountPersonLink.accountId, accountPersonLink.tenantId],
-      name: "role_assignment_revoked_by_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "role_assignment_revoked_by_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     index("role_assignment_account_idx").on(table.accountId),
-    index("role_assignment_tenant_scope_idx").on(table.tenantId, table.scopeOrgId),
+    index("role_assignment_tenant_scope_idx").on(
+      table.tenantId,
+      table.scopeOrgId,
+    ),
     index("role_assignment_active_idx").on(
       table.tenantId,
       table.accountId,
       table.startsAt,
       table.endsAt,
-      table.revokedAt
+      table.revokedAt,
     ),
     check(
       "role_assignment_dates_valid",
-      sql`${table.endsAt} IS NULL OR ${table.startsAt} < ${table.endsAt}`
+      sql`${table.endsAt} IS NULL OR ${table.startsAt} < ${table.endsAt}`,
     ),
     check(
       "role_assignment_scope_org_required",
-      sql`(${table.scopeType} = 'GLOBAL_TECH' AND ${table.scopeOrgId} IS NULL) OR (${table.scopeType} <> 'GLOBAL_TECH' AND ${table.scopeOrgId} IS NOT NULL)`
-    )
-  ]
+      sql`(${table.scopeType} = 'GLOBAL_TECH' AND ${table.scopeOrgId} IS NULL) OR (${table.scopeType} <> 'GLOBAL_TECH' AND ${table.scopeOrgId} IS NOT NULL)`,
+    ),
+  ],
 );
 
 export const accountInvitation = pgTable(
@@ -551,7 +619,7 @@ export const accountInvitation = pgTable(
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
     invitedByAccountId: uuid("invited_by_account_id").notNull(),
     adultEligibilityAttestedAt: timestamp("adult_eligibility_attested_at", {
-      withTimezone: true
+      withTimezone: true,
     }).notNull(),
     adultEligibilityAttestedBy: uuid("adult_eligibility_attested_by").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -559,75 +627,103 @@ export const accountInvitation = pgTable(
       .defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
-      .defaultNow()
+      .defaultNow(),
   },
   (table) => [
     foreignKey({
       columns: [table.tenantId],
       foreignColumns: [organization.id],
-      name: "account_invitation_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "account_invitation_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.accountId],
       foreignColumns: [account.id],
-      name: "account_invitation_account_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "account_invitation_account_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.accountId, table.tenantId],
       foreignColumns: [accountPersonLink.accountId, accountPersonLink.tenantId],
-      name: "account_invitation_account_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "account_invitation_account_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.accountId, table.tenantId, table.personId],
       foreignColumns: [
         accountPersonLink.accountId,
         accountPersonLink.tenantId,
-        accountPersonLink.personId
+        accountPersonLink.personId,
       ],
-      name: "account_invitation_account_person_link_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "account_invitation_account_person_link_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.personId],
       foreignColumns: [person.id],
-      name: "account_invitation_person_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "account_invitation_person_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.personId, table.tenantId],
       foreignColumns: [person.id, person.tenantId],
-      name: "account_invitation_person_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "account_invitation_person_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.intendedRoleId],
       foreignColumns: [roleDefinition.id],
-      name: "account_invitation_intended_role_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "account_invitation_intended_role_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.intendedScopeOrgId, table.tenantId],
       foreignColumns: [organization.id, organization.tenantId],
-      name: "account_invitation_scope_org_same_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "account_invitation_scope_org_same_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.invitedByAccountId],
       foreignColumns: [account.id],
-      name: "account_invitation_invited_by_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "account_invitation_invited_by_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.invitedByAccountId, table.tenantId],
       foreignColumns: [accountPersonLink.accountId, accountPersonLink.tenantId],
-      name: "account_invitation_invited_by_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "account_invitation_invited_by_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.adultEligibilityAttestedBy, table.tenantId],
       foreignColumns: [accountPersonLink.accountId, accountPersonLink.tenantId],
-      name: "account_invitation_adult_attested_by_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "account_invitation_adult_attested_by_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     uniqueIndex("account_invitation_external_unique")
       .on(table.externalInvitationId)
       .where(sql`${table.externalInvitationId} IS NOT NULL`),
-    index("account_invitation_tenant_status_idx").on(table.tenantId, table.status),
+    index("account_invitation_tenant_status_idx").on(
+      table.tenantId,
+      table.status,
+    ),
     index("account_invitation_email_idx").on(table.email),
-    check("account_invitation_email_not_empty", sql`length(btrim(${table.email})) > 0`)
-  ]
+    check(
+      "account_invitation_email_not_empty",
+      sql`length(btrim(${table.email})) > 0`,
+    ),
+  ],
 );
 
 export const project = pgTable(
@@ -658,48 +754,63 @@ export const project = pgTable(
       .defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
-      .defaultNow()
+      .defaultNow(),
   },
   (table) => [
     unique("project_id_tenant_unique").on(table.id, table.tenantId),
     unique("project_tenant_code_unique").on(table.tenantId, table.code),
-    unique("project_tenant_internal_slug_unique").on(table.tenantId, table.internalSlug),
+    unique("project_tenant_internal_slug_unique").on(
+      table.tenantId,
+      table.internalSlug,
+    ),
     foreignKey({
       columns: [table.tenantId],
       foreignColumns: [organization.id],
-      name: "project_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "project_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.ownerOrgId, table.tenantId],
       foreignColumns: [organization.id, organization.tenantId],
-      name: "project_owner_org_same_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "project_owner_org_same_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.projectLeadPersonId, table.tenantId],
       foreignColumns: [person.id, person.tenantId],
-      name: "project_lead_person_same_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "project_lead_person_same_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.createdByAccountId, table.tenantId],
       foreignColumns: [accountPersonLink.accountId, accountPersonLink.tenantId],
-      name: "project_created_by_account_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "project_created_by_account_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     index("project_tenant_idx").on(table.tenantId),
     index("project_owner_org_idx").on(table.tenantId, table.ownerOrgId),
     index("project_status_idx").on(table.tenantId, table.status),
     index("project_mode_idx").on(table.tenantId, table.projectMode),
-    index("project_updated_at_idx").on(table.tenantId, table.updatedAt, table.id),
+    index("project_updated_at_idx").on(
+      table.tenantId,
+      table.updatedAt,
+      table.id,
+    ),
     check("project_version_positive", sql`${table.version} >= 1`),
     check("project_title_not_empty", sql`length(btrim(${table.title})) > 0`),
     check(
       "project_planned_dates_valid",
-      sql`${table.plannedEndAt} IS NULL OR ${table.plannedStartAt} IS NULL OR ${table.plannedEndAt} >= ${table.plannedStartAt}`
+      sql`${table.plannedEndAt} IS NULL OR ${table.plannedStartAt} IS NULL OR ${table.plannedEndAt} >= ${table.plannedStartAt}`,
     ),
     check(
       "project_actual_dates_valid",
-      sql`${table.actualEndAt} IS NULL OR ${table.actualStartAt} IS NULL OR ${table.actualEndAt} >= ${table.actualStartAt}`
-    )
-  ]
+      sql`${table.actualEndAt} IS NULL OR ${table.actualStartAt} IS NULL OR ${table.actualEndAt} >= ${table.actualStartAt}`,
+    ),
+  ],
 );
 
 export const approvalRequest = pgTable(
@@ -714,13 +825,23 @@ export const approvalRequest = pgTable(
     status: approvalRequestStatus("status").notNull().default("PENDING"),
     submittedProjectVersion: integer("submitted_project_version").notNull(),
     requestedByAccountId: uuid("requested_by_account_id").notNull(),
-    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+    requestedAt: timestamp("requested_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
-    unique("approval_request_project_tenant_unique").on(table.id, table.resourceId, table.tenantId),
+    unique("approval_request_project_tenant_unique").on(
+      table.id,
+      table.resourceId,
+      table.tenantId,
+    ),
     unique("approval_request_id_tenant_unique").on(table.id, table.tenantId),
     uniqueIndex("approval_request_one_pending_project_stage_unique")
       .on(table.tenantId, table.resourceId, table.workflow, table.stage)
@@ -728,23 +849,43 @@ export const approvalRequest = pgTable(
     foreignKey({
       columns: [table.tenantId],
       foreignColumns: [organization.id],
-      name: "approval_request_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "approval_request_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.resourceId, table.tenantId],
       foreignColumns: [project.id, project.tenantId],
-      name: "approval_request_project_same_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "approval_request_project_same_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.requestedByAccountId, table.tenantId],
       foreignColumns: [accountPersonLink.accountId, accountPersonLink.tenantId],
-      name: "approval_request_requested_by_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
-    index("approval_request_queue_idx").on(table.tenantId, table.status, table.requestedAt, table.id),
-    check("approval_request_submitted_version_positive", sql`${table.submittedProjectVersion} >= 1`),
-    check("approval_request_project_only", sql`${table.resourceType} = 'PROJECT' AND ${table.workflow} = 'PROJECT' AND ${table.stage} = 'INITIAL_REVIEW'`),
-    check("approval_request_resolved_when_terminal", sql`(${table.status} = 'PENDING' AND ${table.resolvedAt} IS NULL) OR (${table.status} <> 'PENDING' AND ${table.resolvedAt} IS NOT NULL)`)
-  ]
+      name: "approval_request_requested_by_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
+    index("approval_request_queue_idx").on(
+      table.tenantId,
+      table.status,
+      table.requestedAt,
+      table.id,
+    ),
+    check(
+      "approval_request_submitted_version_positive",
+      sql`${table.submittedProjectVersion} >= 1`,
+    ),
+    check(
+      "approval_request_project_only",
+      sql`${table.resourceType} = 'PROJECT' AND ${table.workflow} = 'PROJECT' AND ${table.stage} = 'INITIAL_REVIEW'`,
+    ),
+    check(
+      "approval_request_resolved_when_terminal",
+      sql`(${table.status} = 'PENDING' AND ${table.resolvedAt} IS NULL) OR (${table.status} <> 'PENDING' AND ${table.resolvedAt} IS NOT NULL)`,
+    ),
+  ],
 );
 
 export const approvalDecisionTable = pgTable(
@@ -756,28 +897,42 @@ export const approvalDecisionTable = pgTable(
     reviewerAccountId: uuid("reviewer_account_id").notNull(),
     decision: approvalDecision("decision").notNull(),
     reason: text("reason"),
-    decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow()
+    decidedAt: timestamp("decided_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     unique("approval_decision_request_unique").on(table.requestId),
     foreignKey({
       columns: [table.requestId],
       foreignColumns: [approvalRequest.id],
-      name: "approval_decision_request_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "approval_decision_request_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.requestId, table.tenantId],
       foreignColumns: [approvalRequest.id, approvalRequest.tenantId],
-      name: "approval_decision_request_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "approval_decision_request_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.reviewerAccountId, table.tenantId],
       foreignColumns: [accountPersonLink.accountId, accountPersonLink.tenantId],
-      name: "approval_decision_reviewer_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
-    check("approval_decision_reason_required", sql`(${table.decision} = 'APPROVED') OR (${table.reason} IS NOT NULL AND length(btrim(${table.reason})) > 0)`),
-    check("approval_decision_reason_length", sql`${table.reason} IS NULL OR length(${table.reason}) <= 4000`)
-  ]
+      name: "approval_decision_reviewer_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
+    check(
+      "approval_decision_reason_required",
+      sql`(${table.decision} = 'APPROVED') OR (${table.reason} IS NOT NULL AND length(btrim(${table.reason})) > 0)`,
+    ),
+    check(
+      "approval_decision_reason_length",
+      sql`${table.reason} IS NULL OR length(${table.reason}) <= 4000`,
+    ),
+  ],
 );
 
 export const stateTransition = pgTable(
@@ -792,28 +947,50 @@ export const stateTransition = pgTable(
     actorAccountId: uuid("actor_account_id").notNull(),
     approvalRequestId: uuid("approval_request_id"),
     reason: text("reason"),
-    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow()
+    occurredAt: timestamp("occurred_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     foreignKey({
       columns: [table.entityId, table.tenantId],
       foreignColumns: [project.id, project.tenantId],
-      name: "state_transition_project_same_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "state_transition_project_same_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.actorAccountId, table.tenantId],
       foreignColumns: [accountPersonLink.accountId, accountPersonLink.tenantId],
-      name: "state_transition_actor_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "state_transition_actor_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.approvalRequestId, table.entityId, table.tenantId],
-      foreignColumns: [approvalRequest.id, approvalRequest.resourceId, approvalRequest.tenantId],
-      name: "state_transition_request_project_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
-    index("state_transition_entity_idx").on(table.tenantId, table.entityId, table.occurredAt),
-    check("state_transition_project_only", sql`${table.entityType} = 'PROJECT'`),
-    check("state_transition_state_changed", sql`${table.fromState} <> ${table.toState}`)
-  ]
+      foreignColumns: [
+        approvalRequest.id,
+        approvalRequest.resourceId,
+        approvalRequest.tenantId,
+      ],
+      name: "state_transition_request_project_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
+    index("state_transition_entity_idx").on(
+      table.tenantId,
+      table.entityId,
+      table.occurredAt,
+    ),
+    check(
+      "state_transition_project_only",
+      sql`${table.entityType} = 'PROJECT'`,
+    ),
+    check(
+      "state_transition_state_changed",
+      sql`${table.fromState} <> ${table.toState}`,
+    ),
+  ],
 );
 
 export const projectComment = pgTable(
@@ -827,30 +1004,55 @@ export const projectComment = pgTable(
     kind: projectCommentKind("kind").notNull(),
     fieldKey: text("field_key"),
     body: text("body").notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     foreignKey({
       columns: [table.projectId, table.tenantId],
       foreignColumns: [project.id, project.tenantId],
-      name: "project_comment_project_same_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "project_comment_project_same_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.approvalRequestId, table.projectId, table.tenantId],
-      foreignColumns: [approvalRequest.id, approvalRequest.resourceId, approvalRequest.tenantId],
-      name: "project_comment_request_project_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      foreignColumns: [
+        approvalRequest.id,
+        approvalRequest.resourceId,
+        approvalRequest.tenantId,
+      ],
+      name: "project_comment_request_project_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.authorAccountId, table.tenantId],
       foreignColumns: [accountPersonLink.accountId, accountPersonLink.tenantId],
-      name: "project_comment_author_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
-    index("project_comment_request_idx").on(table.tenantId, table.approvalRequestId, table.createdAt),
-    check("project_comment_body_not_empty", sql`length(btrim(${table.body})) > 0`),
+      name: "project_comment_author_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
+    index("project_comment_request_idx").on(
+      table.tenantId,
+      table.approvalRequestId,
+      table.createdAt,
+    ),
+    check(
+      "project_comment_body_not_empty",
+      sql`length(btrim(${table.body})) > 0`,
+    ),
     check("project_comment_body_length", sql`length(${table.body}) <= 4000`),
-    check("project_comment_kind_field_consistent", sql`(${table.kind} = 'GLOBAL' AND ${table.fieldKey} IS NULL) OR (${table.kind} = 'FIELD' AND ${table.fieldKey} IS NOT NULL)`),
-    check("project_comment_field_allowlist", sql`${table.fieldKey} IS NULL OR ${table.fieldKey} IN ('title', 'summary', 'problemStatement', 'diagnostic', 'projectMode', 'visibility', 'locationLabel', 'plannedStartAt', 'plannedEndAt', 'actualStartAt', 'actualEndAt')`)
-  ]
+    check(
+      "project_comment_kind_field_consistent",
+      sql`(${table.kind} = 'GLOBAL' AND ${table.fieldKey} IS NULL) OR (${table.kind} = 'FIELD' AND ${table.fieldKey} IS NOT NULL)`,
+    ),
+    check(
+      "project_comment_field_allowlist",
+      sql`${table.fieldKey} IS NULL OR ${table.fieldKey} IN ('title', 'summary', 'problemStatement', 'diagnostic', 'projectMode', 'visibility', 'locationLabel', 'plannedStartAt', 'plannedEndAt', 'actualStartAt', 'actualEndAt')`,
+    ),
+  ],
 );
 
 export const mediaAsset = pgTable(
@@ -865,22 +1067,36 @@ export const mediaAsset = pgTable(
     byteSize: bigint("byte_size", { mode: "number" }).notNull(),
     sha256: text("sha256").notNull(),
     etag: text("etag"),
-    classification: evidenceClassification("classification").notNull().default("P3"),
-    uploadStatus: mediaUploadStatus("upload_status").notNull().default("PENDING_UPLOAD"),
+    classification: evidenceClassification("classification")
+      .notNull()
+      .default("P3"),
+    uploadStatus: mediaUploadStatus("upload_status")
+      .notNull()
+      .default("PENDING_UPLOAD"),
     scanStatus: mediaScanStatus("scan_status").notNull().default("NOT_SCANNED"),
     uploadedByAccountId: uuid("uploaded_by_account_id").notNull(),
-    uploadExpiresAt: timestamp("upload_expires_at", { withTimezone: true }).notNull(),
+    uploadExpiresAt: timestamp("upload_expires_at", {
+      withTimezone: true,
+    }).notNull(),
     verifiedAt: timestamp("verified_at", { withTimezone: true }),
     rejectedAt: timestamp("rejected_at", { withTimezone: true }),
     rejectionCode: text("rejection_code"),
     width: integer("width"),
     height: integer("height"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     unique("media_asset_id_tenant_unique").on(table.id, table.tenantId),
-    unique("media_asset_id_project_tenant_unique").on(table.id, table.projectId, table.tenantId),
+    unique("media_asset_id_project_tenant_unique").on(
+      table.id,
+      table.projectId,
+      table.tenantId,
+    ),
     uniqueIndex("media_asset_object_key_unique")
       .on(table.tenantId, table.objectKey)
       .where(sql`${table.objectKey} IS NOT NULL`),
@@ -890,36 +1106,54 @@ export const mediaAsset = pgTable(
     foreignKey({
       columns: [table.projectId, table.tenantId],
       foreignColumns: [project.id, project.tenantId],
-      name: "media_asset_project_same_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "media_asset_project_same_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.uploadedByAccountId, table.tenantId],
       foreignColumns: [accountPersonLink.accountId, accountPersonLink.tenantId],
-      name: "media_asset_uploaded_by_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
-    index("media_asset_project_status_idx").on(table.tenantId, table.projectId, table.uploadStatus),
-    index("media_asset_uploader_status_idx").on(table.tenantId, table.uploadedByAccountId, table.uploadStatus),
-    check("media_asset_mime_allowlist", sql`${table.mime} IN ('image/jpeg', 'image/png', 'application/pdf')`),
+      name: "media_asset_uploaded_by_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
+    index("media_asset_project_status_idx").on(
+      table.tenantId,
+      table.projectId,
+      table.uploadStatus,
+    ),
+    index("media_asset_uploader_status_idx").on(
+      table.tenantId,
+      table.uploadedByAccountId,
+      table.uploadStatus,
+    ),
+    check(
+      "media_asset_mime_allowlist",
+      sql`${table.mime} IN ('image/jpeg', 'image/png', 'application/pdf')`,
+    ),
     check("media_asset_byte_size_positive", sql`${table.byteSize} > 0`),
     check("media_asset_sha256_hex", sql`${table.sha256} ~ '^[a-f0-9]{64}$'`),
-    check("media_asset_dimensions_positive", sql`(${table.width} IS NULL OR ${table.width} > 0) AND (${table.height} IS NULL OR ${table.height} > 0)`),
+    check(
+      "media_asset_dimensions_positive",
+      sql`(${table.width} IS NULL OR ${table.width} > 0) AND (${table.height} IS NULL OR ${table.height} > 0)`,
+    ),
     check(
       "media_asset_pending_shape",
-      sql`${table.uploadStatus} <> 'PENDING_UPLOAD' OR (${table.temporaryObjectKey} IS NOT NULL AND ${table.objectKey} IS NULL AND ${table.verifiedAt} IS NULL AND ${table.rejectedAt} IS NULL AND ${table.rejectionCode} IS NULL)`
+      sql`${table.uploadStatus} <> 'PENDING_UPLOAD' OR (${table.temporaryObjectKey} IS NOT NULL AND ${table.objectKey} IS NULL AND ${table.verifiedAt} IS NULL AND ${table.rejectedAt} IS NULL AND ${table.rejectionCode} IS NULL)`,
     ),
     check(
       "media_asset_verifying_shape",
-      sql`${table.uploadStatus} <> 'VERIFYING' OR (${table.temporaryObjectKey} IS NOT NULL AND ${table.objectKey} IS NULL AND ${table.verifiedAt} IS NULL AND ${table.rejectedAt} IS NULL AND ${table.rejectionCode} IS NULL)`
+      sql`${table.uploadStatus} <> 'VERIFYING' OR (${table.temporaryObjectKey} IS NOT NULL AND ${table.objectKey} IS NULL AND ${table.verifiedAt} IS NULL AND ${table.rejectedAt} IS NULL AND ${table.rejectionCode} IS NULL)`,
     ),
     check(
       "media_asset_verified_shape",
-      sql`${table.uploadStatus} <> 'VERIFIED' OR (${table.temporaryObjectKey} IS NOT NULL AND ${table.objectKey} IS NOT NULL AND ${table.verifiedAt} IS NOT NULL AND ${table.rejectedAt} IS NULL AND ${table.rejectionCode} IS NULL)`
+      sql`${table.uploadStatus} <> 'VERIFIED' OR (${table.temporaryObjectKey} IS NOT NULL AND ${table.objectKey} IS NOT NULL AND ${table.verifiedAt} IS NOT NULL AND ${table.rejectedAt} IS NULL AND ${table.rejectionCode} IS NULL)`,
     ),
     check(
       "media_asset_rejected_shape",
-      sql`${table.uploadStatus} <> 'REJECTED' OR (${table.objectKey} IS NULL AND ${table.verifiedAt} IS NULL AND ${table.rejectedAt} IS NOT NULL AND ${table.rejectionCode} IS NOT NULL)`
-    )
-  ]
+      sql`${table.uploadStatus} <> 'REJECTED' OR (${table.objectKey} IS NULL AND ${table.verifiedAt} IS NULL AND ${table.rejectedAt} IS NOT NULL AND ${table.rejectionCode} IS NOT NULL)`,
+    ),
+  ],
 );
 
 export const evidence = pgTable(
@@ -934,10 +1168,16 @@ export const evidence = pgTable(
     description: text("description"),
     occurredAt: timestamp("occurred_at", { withTimezone: true }),
     visibility: evidenceVisibility("visibility").notNull().default("PRIVATE"),
-    validationStatus: evidenceValidationStatus("validation_status").notNull().default("UNREVIEWED"),
+    validationStatus: evidenceValidationStatus("validation_status")
+      .notNull()
+      .default("UNREVIEWED"),
     createdByAccountId: uuid("created_by_account_id").notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     unique("evidence_id_tenant_unique").on(table.id, table.tenantId),
@@ -945,27 +1185,149 @@ export const evidence = pgTable(
     foreignKey({
       columns: [table.projectId, table.tenantId],
       foreignColumns: [project.id, project.tenantId],
-      name: "evidence_project_same_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "evidence_project_same_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.mediaAssetId, table.tenantId],
       foreignColumns: [mediaAsset.id, mediaAsset.tenantId],
-      name: "evidence_media_asset_same_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      name: "evidence_media_asset_same_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.mediaAssetId, table.projectId, table.tenantId],
-      foreignColumns: [mediaAsset.id, mediaAsset.projectId, mediaAsset.tenantId],
-      name: "evidence_media_asset_project_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
+      foreignColumns: [
+        mediaAsset.id,
+        mediaAsset.projectId,
+        mediaAsset.tenantId,
+      ],
+      name: "evidence_media_asset_project_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
     foreignKey({
       columns: [table.createdByAccountId, table.tenantId],
       foreignColumns: [accountPersonLink.accountId, accountPersonLink.tenantId],
-      name: "evidence_created_by_tenant_fk"
-    }).onDelete("restrict").onUpdate("restrict"),
-    index("evidence_project_created_idx").on(table.tenantId, table.projectId, table.createdAt, table.id),
+      name: "evidence_created_by_tenant_fk",
+    })
+      .onDelete("restrict")
+      .onUpdate("restrict"),
+    index("evidence_project_created_idx").on(
+      table.tenantId,
+      table.projectId,
+      table.createdAt,
+      table.id,
+    ),
     check("evidence_title_not_empty", sql`length(btrim(${table.title})) > 0`),
     check("evidence_title_length", sql`length(${table.title}) <= 160`),
-    check("evidence_description_length", sql`${table.description} IS NULL OR length(${table.description}) <= 2000`),
-    check("evidence_slice5_type_allowlist", sql`${table.type} IN ('PHOTO', 'DOCUMENT', 'ATTESTATION', 'EXTERNAL_CAPTURE')`)
-  ]
+    check(
+      "evidence_description_length",
+      sql`${table.description} IS NULL OR length(${table.description}) <= 2000`,
+    ),
+    check(
+      "evidence_slice5_type_allowlist",
+      sql`${table.type} IN ('PHOTO', 'DOCUMENT', 'ATTESTATION', 'EXTERNAL_CAPTURE')`,
+    ),
+  ],
+);
+
+export const position = pgTable(
+  "position",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    code: text("code").notNull(),
+    title: text("title").notNull(),
+    description: text("description"),
+    allowedScopeTypes: jsonb("allowed_scope_types").notNull().default([]),
+    sector: text("sector"),
+    branch: text("branch"),
+    holderPolicy: holderPolicy("holder_policy").notNull().default("MULTIPLE"),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("position_id_tenant_unique").on(table.id, table.tenantId),
+    unique("position_tenant_code_unique").on(table.tenantId, table.code),
+    index("position_tenant_idx").on(table.tenantId),
+    foreignKey({
+      columns: [table.tenantId],
+      foreignColumns: [organization.id],
+      name: "position_tenant_fk",
+    }).onDelete("restrict"),
+  ],
+);
+
+export const appointment = pgTable(
+  "appointment",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    personId: uuid("person_id").notNull(),
+    positionId: uuid("position_id").notNull(),
+    scopeOrgId: uuid("scope_org_id").notNull(),
+    status: appointmentStatus("status").notNull().default("PENDING"),
+    startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+    endsAt: timestamp("ends_at", { withTimezone: true }),
+    proposedBy: uuid("proposed_by").notNull(),
+    validatedBy: uuid("validated_by"),
+    rejectedBy: uuid("rejected_by"),
+    endedBy: uuid("ended_by"),
+    proposedAt: timestamp("proposed_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    validatedAt: timestamp("validated_at", { withTimezone: true }),
+    rejectedAt: timestamp("rejected_at", { withTimezone: true }),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    rejectionReason: text("rejection_reason"),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("appointment_tenant_idx").on(table.tenantId),
+    index("appointment_person_idx").on(table.tenantId, table.personId),
+    index("appointment_position_idx").on(table.tenantId, table.positionId),
+    index("appointment_scope_idx").on(table.tenantId, table.scopeOrgId),
+    index("appointment_status_dates_idx").on(
+      table.tenantId,
+      table.status,
+      table.startsAt,
+    ),
+    foreignKey({
+      columns: [table.tenantId],
+      foreignColumns: [organization.id],
+      name: "appointment_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.personId, table.tenantId],
+      foreignColumns: [person.id, person.tenantId],
+      name: "appointment_person_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.positionId, table.tenantId],
+      foreignColumns: [position.id, position.tenantId],
+      name: "appointment_position_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.scopeOrgId, table.tenantId],
+      foreignColumns: [organization.id, organization.tenantId],
+      name: "appointment_scope_tenant_fk",
+    }).onDelete("restrict"),
+    check(
+      "appointment_dates_valid",
+      sql`${table.endsAt} IS NULL OR ${table.startsAt} < ${table.endsAt}`,
+    ),
+  ],
 );

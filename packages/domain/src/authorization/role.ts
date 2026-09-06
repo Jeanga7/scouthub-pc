@@ -36,16 +36,16 @@ export type PermissionCode =
   | "project.reject"
   | "evidence.create"
   | "evidence.read"
-  | "evidence.download";
+  | "evidence.download"
+  | "position.read"
+  | "position.manage"
+  | "appointment.read"
+  | "appointment.create"
+  | "appointment.validate"
+  | "appointment.end";
 
 export type RoleScopeType =
-  | "OWN"
-  | "UNIT"
-  | "GROUP"
-  | "DISTRICT"
-  | "REGION"
-  | "NATIONAL"
-  | "GLOBAL_TECH";
+  "OWN" | "UNIT" | "GROUP" | "DISTRICT" | "REGION" | "NATIONAL" | "GLOBAL_TECH";
 
 export interface RoleAssignment {
   readonly id: string;
@@ -66,7 +66,7 @@ export interface RoleAssignment {
 
 export function isRoleAssignmentActive(
   assignment: RoleAssignment,
-  now: Date
+  now: Date,
 ): boolean {
   return (
     assignment.startsAt <= now &&
@@ -87,55 +87,57 @@ const slice2RoleScopeRules = [
     roleCode: "UNIT_LEADER",
     scopeType: "UNIT",
     organizationType: "UNIT",
-    grantableByRegionalAdmin: true
+    grantableByRegionalAdmin: true,
   },
   {
     roleCode: "GROUP_ADMIN",
     scopeType: "GROUP",
     organizationType: "GROUP",
-    grantableByRegionalAdmin: true
+    grantableByRegionalAdmin: true,
   },
   {
     roleCode: "DISTRICT_REVIEWER",
     scopeType: "DISTRICT",
     organizationType: "DISTRICT",
-    grantableByRegionalAdmin: true
+    grantableByRegionalAdmin: true,
   },
   {
     roleCode: "REGIONAL_PROGRAMME_REVIEWER",
     scopeType: "REGION",
     organizationType: "REGION",
-    grantableByRegionalAdmin: true
+    grantableByRegionalAdmin: true,
   },
   {
     roleCode: "REGIONAL_ADMIN",
     scopeType: "REGION",
     organizationType: "REGION",
-    grantableByRegionalAdmin: true
+    grantableByRegionalAdmin: true,
   },
   {
     roleCode: "REGIONAL_COMMS",
     scopeType: "REGION",
     organizationType: "REGION",
-    grantableByRegionalAdmin: true
+    grantableByRegionalAdmin: true,
   },
   {
     roleCode: "DATA_OFFICER",
     scopeType: "REGION",
     organizationType: "REGION",
-    grantableByRegionalAdmin: true
-  }
+    grantableByRegionalAdmin: true,
+  },
 ] as const satisfies readonly Slice2RoleScopeRule[];
 
 export function getSlice2RoleScopeRule(
-  roleCode: RoleCode
+  roleCode: RoleCode,
 ): Slice2RoleScopeRule | null {
   return (
     slice2RoleScopeRules.find((rule) => rule.roleCode === roleCode) ?? null
   );
 }
 
-export function deriveSlice2ScopeType(roleCode: RoleCode): RoleScopeType | null {
+export function deriveSlice2ScopeType(
+  roleCode: RoleCode,
+): RoleScopeType | null {
   return getSlice2RoleScopeRule(roleCode)?.scopeType ?? null;
 }
 

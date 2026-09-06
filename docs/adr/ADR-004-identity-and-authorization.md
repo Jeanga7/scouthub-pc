@@ -37,6 +37,8 @@ Authorization decisions must derive permission and scope from the same active Ro
 
 `PLATFORM_ADMIN` is deliberately not a business super-admin. It does not receive organization or P2/P3 business data access by default.
 
+Governance workflow actor fields such as `proposed_by`, `validated_by`, `rejected_by` and `ended_by` store the acting Account UUID as immutable decision history. They intentionally do not use tenant-scoped foreign keys to `account_person_link`: administrative decisions must remain readable after an account is deactivated, unlinked or anonymized according to retention policy. Runtime authorization still resolves the current actor through active Account, Person and RoleAssignment state before writing those fields.
+
 Invitations are local first, then external:
 
 1. ScoutHub validates actor permission and scope.
