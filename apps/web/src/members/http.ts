@@ -47,7 +47,9 @@ export function mapMemberDetail(value: MemberDetailView) {
     joinedScoutingAt: value.joinedScoutingAt?.toISOString() ?? null,
     memberships: value.memberships.map(mapMembership),
     activeAppointments: value.activeAppointments.map((item) => ({
-      ...item,
+      id: item.id,
+      title: item.title,
+      scopeName: item.scopeName,
       startsAt: item.startsAt.toISOString(),
       endsAt: item.endsAt?.toISOString() ?? null,
     })),

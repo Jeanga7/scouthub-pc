@@ -15,6 +15,7 @@ const groupBId = "c1000000-0000-4000-8000-000000000005";
 const unitId = "c1000000-0000-4000-8000-000000000006";
 const personId = "c1000000-0000-4000-8000-000000000007";
 const accountId = "c1000000-0000-4000-8000-000000000008";
+const districtBId = "c1000000-0000-4000-8000-000000000009";
 const pool = new pg.Pool({ connectionString: databaseUrl, max: 25 });
 const repository = createPgMemberRepository(databaseUrl);
 const memberUseCases: MemberUseCases = new MemberUseCasesImpl(repository, {
@@ -24,6 +25,13 @@ const memberUseCases: MemberUseCases = new MemberUseCasesImpl(repository, {
 function actor(
   scopeType: "REGION" | "DISTRICT" | "GROUP",
   scopeOrgId: string,
+  permissions = [
+    "member.read",
+    "member.read_sensitive",
+    "member.create",
+    "member.update",
+    "member.transfer",
+  ],
 ): ActorContext {
   const paths = {
     REGION: `/${tenantId}/${regionId}/`,
@@ -45,13 +53,7 @@ function actor(
         scopeType,
         scopeOrgId,
         scopePath: paths[scopeType],
-        permissions: [
-          "member.read",
-          "member.read_sensitive",
-          "member.create",
-          "member.update",
-          "member.transfer",
-        ],
+        permissions,
         startsAt: new Date(0),
         endsAt: null,
         revokedAt: null,
@@ -83,12 +85,16 @@ beforeAll(async () => {
     ],
   );
   await pool.query(
+    "INSERT INTO organization (id, tenant_id, parent_id, type, name, code, status, path, depth) VALUES ($1,$2,$2,'DISTRICT','Test members district B','TEST-DISTRICT-B','ACTIVE',$3,2) ON CONFLICT (id) DO NOTHING",
+    [districtBId, tenantId, `/${tenantId}/${regionId}/${districtBId}/`],
+  );
+  await pool.query(
     "INSERT INTO organization (id, tenant_id, parent_id, type, name, code, status, path, depth) VALUES ($1,$2,$3,'GROUP','Test members group B','TEST-GROUP-B','ACTIVE',$4,3) ON CONFLICT (id) DO NOTHING",
     [
       groupBId,
       tenantId,
-      districtId,
-      `/${tenantId}/${regionId}/${districtId}/${groupBId}/`,
+      districtBId,
+      `/${tenantId}/${regionId}/${districtBId}/${groupBId}/`,
     ],
   );
   await pool.query(
@@ -191,6 +197,148 @@ describe("member registry PostgreSQL invariants", () => {
         personId,
       }),
     ).resolves.toMatchObject({ personId });
+  });
+
+  it("redacts sensitive fields from create results without read_sensitive", async () => {
+    const created = await memberUseCases.createMember({
+      actor: actor("GROUP", groupAId, ["member.read", "member.create"]),
+      requestId: crypto.randomUUID(),
+      tenantId,
+      firstName: "Redacted",
+      lastName: "Create",
+      birthDate: new Date("2012-04-05T00:00:00Z"),
+      birthPlace: "Dakar",
+      sex: "FEMALE",
+      primaryPhone: "+221700000001",
+      secondaryPhone: "+221700000002",
+      email: "redacted@example.test",
+      guardianName: "Fictional Guardian",
+      guardianPhone: "+221700000003",
+      guardianRelationship: "Parent",
+      organizationId: groupAId,
+      startsAt: new Date("2024-01-01T00:00:00Z"),
+      branch: "Verte",
+      insuranceNumber: "INS-001",
+      insuranceYear: 2024,
+      joinedScoutingAt: new Date("2024-01-01T00:00:00Z"),
+      administrativeNotes: "Restricted note",
+    });
+    expect(created).toMatchObject({
+      birthDate: null,
+      birthPlace: null,
+      primaryPhone: null,
+      secondaryPhone: null,
+      email: null,
+      guardianName: null,
+      guardianPhone: null,
+      guardianRelationship: null,
+      insuranceNumber: null,
+      insuranceYear: null,
+      administrativeNotes: null,
+    });
+    await expect(
+      memberUseCases.getMember({
+        actor: actor("REGION", regionId),
+        tenantId,
+        personId: created.personId,
+      }),
+    ).resolves.toMatchObject({
+      birthDate: new Date("2012-04-05T00:00:00Z"),
+      primaryPhone: "+221700000001",
+      guardianName: "Fictional Guardian",
+      insuranceNumber: "INS-001",
+      administrativeNotes: "Restricted note",
+    });
+  });
+
+  it("scopes membership history to the actor organization paths", async () => {
+    const member = await memberUseCases.createMember({
+      actor: actor("REGION", regionId),
+      requestId: crypto.randomUUID(),
+      tenantId,
+      firstName: "History",
+      lastName: "Scoped",
+      birthDate: null,
+      birthPlace: null,
+      sex: "UNSPECIFIED",
+      primaryPhone: null,
+      secondaryPhone: null,
+      email: null,
+      guardianName: null,
+      guardianPhone: null,
+      guardianRelationship: null,
+      organizationId: groupBId,
+      startsAt: new Date("2024-01-01T00:00:00Z"),
+      branch: null,
+      insuranceNumber: null,
+      insuranceYear: null,
+      joinedScoutingAt: null,
+      administrativeNotes: null,
+    });
+    await memberUseCases.transferMember({
+      actor: actor("REGION", regionId),
+      requestId: crypto.randomUUID(),
+      tenantId,
+      personId: member.personId,
+      organizationId: groupAId,
+      startsAt: new Date("2025-01-01T00:00:00Z"),
+      branch: null,
+    });
+    const groupView = await memberUseCases.getMember({
+      actor: actor("GROUP", groupAId),
+      tenantId,
+      personId: member.personId,
+    });
+    expect(groupView.currentOrganization?.id).toBe(groupAId);
+    expect(groupView.memberships.map((item) => item.organizationId)).toEqual([
+      groupAId,
+    ]);
+    const regionalView = await memberUseCases.getMember({
+      actor: actor("REGION", regionId),
+      tenantId,
+      personId: member.personId,
+    });
+    expect(regionalView.memberships.map((item) => item.organizationId)).toEqual(
+      expect.arrayContaining([groupAId, groupBId]),
+    );
+  });
+
+  it("does not combine regional read with a separate group sensitive grant for orphans", async () => {
+    const orphanId = crypto.randomUUID();
+    const orphanProfileId = crypto.randomUUID();
+    await pool.query(
+      "INSERT INTO person (id, tenant_id, first_name, last_name, display_name, birth_date) VALUES ($1,$2,'Orphan','Mixed','Orphan Mixed','2010-01-01')",
+      [orphanId, tenantId],
+    );
+    await pool.query(
+      "INSERT INTO scout_profile (id, tenant_id, person_id, scout_id, primary_phone, email) VALUES ($1,$2,$3,'PC-900002','+221700000004','mixed@example.test')",
+      [orphanProfileId, tenantId, orphanId],
+    );
+    const mixedActor = {
+      ...actor("REGION", regionId, ["member.read"]),
+      assignments: [
+        ...actor("REGION", regionId, ["member.read"]).assignments,
+        ...actor("GROUP", groupAId, ["member.read_sensitive"]).assignments,
+      ],
+    } as ActorContext;
+    await expect(
+      memberUseCases.getMember({
+        actor: mixedActor,
+        tenantId,
+        personId: orphanId,
+      }),
+    ).resolves.toMatchObject({
+      birthDate: null,
+      primaryPhone: null,
+      email: null,
+    });
+    await expect(
+      memberUseCases.getMember({
+        actor: actor("REGION", regionId),
+        tenantId,
+        personId: orphanId,
+      }),
+    ).resolves.toMatchObject({ primaryPhone: "+221700000004" });
   });
 
   it("rejects NSO targets and keeps sibling organization filters scoped", async () => {

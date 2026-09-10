@@ -108,12 +108,7 @@ export class MemberUseCases {
     );
     if (detail === null) throw new NotFoundError("Membre introuvable.");
     assertCanReadMember(input.actor, detail, "member.read");
-    if (
-      !canReadSensitive(input.actor, input.tenantId, detail.currentOrganization)
-    ) {
-      return redactSensitive(detail);
-    }
-    return detail;
+    return visibleMemberDetail(input.actor, input.tenantId, detail);
   }
 
   async createMember(input: CreateMemberInput): Promise<MemberDetailView> {
@@ -182,7 +177,7 @@ export class MemberUseCases {
           },
         ),
       );
-      return created;
+      return visibleMemberDetail(input.actor, input.tenantId, created);
     });
   }
 
@@ -213,13 +208,7 @@ export class MemberUseCases {
           },
         ),
       );
-      return canReadSensitive(
-        input.actor,
-        input.tenantId,
-        updated.currentOrganization,
-      )
-        ? updated
-        : redactSensitive(updated);
+      return visibleMemberDetail(input.actor, input.tenantId, updated);
     });
   }
 
@@ -288,13 +277,7 @@ export class MemberUseCases {
       );
       const updated = await tx.findMemberDetail(input.tenantId, input.personId);
       if (updated === null) throw new NotFoundError("Membre introuvable.");
-      return canReadSensitive(
-        input.actor,
-        input.tenantId,
-        updated.currentOrganization,
-      )
-        ? updated
-        : redactSensitive(updated);
+      return visibleMemberDetail(input.actor, input.tenantId, updated);
     });
   }
 
@@ -363,11 +346,48 @@ function canReadSensitive(
   organization: MemberOrganizationRef | null,
 ): boolean {
   if (organization === null) {
-    return (
-      readableScopePaths(actor, tenantId, "member.read_sensitive").length > 0
-    );
+    return hasRegionalPermission(actor, tenantId, "member.read_sensitive");
   }
   return hasScopePermission(actor, "member.read_sensitive", organization);
+}
+
+function hasRegionalPermission(
+  actor: ActorContext,
+  tenantId: string,
+  permission: PermissionCode,
+): boolean {
+  return actor.assignments.some(
+    (assignment) =>
+      assignment.tenantId === tenantId &&
+      assignment.scopeType === "REGION" &&
+      assignment.scopePath !== null &&
+      assignment.permissions.includes(permission) &&
+      assignment.roleCode !== "PLATFORM_ADMIN" &&
+      isRoleAssignmentActive(assignment, new Date()),
+  );
+}
+
+function visibleMemberDetail(
+  actor: ActorContext,
+  tenantId: string,
+  detail: MemberDetailView,
+): MemberDetailView {
+  const scopePaths = readableScopePaths(actor, tenantId, "member.read");
+  const memberships = detail.memberships.filter((membership) => {
+    if (scopePaths.some((path) => path === `/${tenantId}/`)) return true;
+    const organizationPath = membership.organizationPath;
+    return (
+      organizationPath !== undefined &&
+      scopePaths.some((path) => organizationPath.startsWith(path))
+    );
+  });
+  const activeAppointments = detail.activeAppointments.filter((appointment) =>
+    scopePaths.some((path) => appointment.scopePath.startsWith(path)),
+  );
+  const scoped = { ...detail, memberships, activeAppointments };
+  return canReadSensitive(actor, tenantId, detail.currentOrganization)
+    ? scoped
+    : redactSensitive(scoped);
 }
 
 function assertScopePermission(
@@ -486,6 +506,7 @@ function redactSensitive(detail: MemberDetailView): MemberDetailView {
   return {
     ...detail,
     birthDate: null,
+    birthPlace: null,
     primaryPhone: null,
     secondaryPhone: null,
     email: null,

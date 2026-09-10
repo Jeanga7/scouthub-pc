@@ -502,11 +502,12 @@ class PgMemberTransaction implements MemberTransaction {
         id: string;
         title: string;
         scope_name: string;
+        scope_path: string;
         starts_at: Date;
         ends_at: Date | null;
       }
     >(
-      `SELECT a.id, pos.title, org.name AS scope_name, a.starts_at, a.ends_at
+      `SELECT a.id, pos.title, org.name AS scope_name, org.path AS scope_path, a.starts_at, a.ends_at
        FROM appointment a
        JOIN position pos ON pos.id = a.position_id AND pos.tenant_id = a.tenant_id
        JOIN organization org ON org.id = a.scope_org_id AND org.tenant_id = a.tenant_id
@@ -518,6 +519,7 @@ class PgMemberTransaction implements MemberTransaction {
       id: row.id,
       title: row.title,
       scopeName: row.scope_name,
+      scopePath: row.scope_path,
       startsAt: row.starts_at,
       endsAt: row.ends_at,
     }));

@@ -51,6 +51,7 @@ export interface MemberDetailView extends MemberSummaryView {
     readonly id: string;
     readonly title: string;
     readonly scopeName: string;
+    readonly scopePath: string;
     readonly startsAt: Date;
     readonly endsAt: Date | null;
   }[];
