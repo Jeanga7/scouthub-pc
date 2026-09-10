@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { headers } from "next/headers";
+import type { UrlObject } from "url";
 import {
   AppShell,
   Breadcrumb,
@@ -157,7 +158,7 @@ export default async function StructureDetailPage({
           <div className="section-heading-row">
             <h2>Membres</h2>
             {memberStats ? (
-              <Link href={membersHref(organization) as never}>
+              <Link href={membersHref(organization)}>
                 Voir tous les membres
               </Link>
             ) : null}
@@ -215,18 +216,21 @@ export default async function StructureDetailPage({
   );
 }
 
-function membersHref(organization: OrganizationResponse): string {
+function membersHref(organization: OrganizationResponse): UrlObject {
   switch (organization.type) {
     case "DISTRICT":
-      return `/app/members?districtId=${organization.id}`;
+      return {
+        pathname: "/app/members",
+        query: { districtId: organization.id },
+      };
     case "GROUP":
-      return `/app/members?groupId=${organization.id}`;
+      return { pathname: "/app/members", query: { groupId: organization.id } };
     case "ANNEX":
-      return `/app/members?annexId=${organization.id}`;
+      return { pathname: "/app/members", query: { annexId: organization.id } };
     case "UNIT":
-      return `/app/members?unitId=${organization.id}`;
+      return { pathname: "/app/members", query: { unitId: organization.id } };
     default:
-      return "/app/members";
+      return { pathname: "/app/members" };
   }
 }
 

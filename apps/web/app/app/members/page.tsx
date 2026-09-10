@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { headers } from "next/headers";
+import type { UrlObject } from "url";
 import {
   AppShell,
   Avatar,
@@ -149,10 +150,7 @@ export default async function MembersPage({
               ))}
             </section>
             <nav className="member-pagination" aria-label="Pagination">
-              <Link
-                aria-disabled={page <= 1}
-                href={pageHref(params, page - 1) as never}
-              >
+              <Link aria-disabled={page <= 1} href={pageHref(params, page - 1)}>
                 Précédent
               </Link>
               <span>
@@ -160,7 +158,7 @@ export default async function MembersPage({
               </span>
               <Link
                 aria-disabled={page >= totalPages}
-                href={pageHref(params, page + 1) as never}
+                href={pageHref(params, page + 1)}
               >
                 Suivant
               </Link>
@@ -184,12 +182,12 @@ function value(input: string | string[] | undefined): string | undefined {
 function pageHref(
   params: Record<string, string | string[] | undefined>,
   page: number,
-) {
+): UrlObject {
   const target = new URLSearchParams();
   for (const [key, current] of Object.entries(params)) {
     const item = value(current);
     if (item && key !== "page") target.set(key, item);
   }
   target.set("page", String(Math.max(1, page)));
-  return `/app/members?${target.toString()}`;
+  return { pathname: "/app/members", query: Object.fromEntries(target) };
 }
