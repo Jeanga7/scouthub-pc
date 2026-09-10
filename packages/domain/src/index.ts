@@ -4,40 +4,46 @@ export type {
   CreateDomainEventInput,
   DomainEvent,
   EventPayload,
-  JsonValue
+  JsonValue,
 } from "./events/domain-event";
 export {
   createDomainEvent,
   normalizeAggregateType,
   normalizeEventType,
-  serializeEventPayload
+  serializeEventPayload,
 } from "./events/domain-event";
 export { EventDomainError } from "./events/event-errors";
 export type {
   ProjectSubmittedForReviewEvent,
-  ProjectSubmittedForReviewPayload
+  ProjectSubmittedForReviewPayload,
 } from "./events/project-events";
 export {
   createProjectSubmittedForReviewEvent,
   projectAggregateType,
-  projectSubmittedForReviewEventType
+  projectSubmittedForReviewEventType,
 } from "./events/project-events";
 export type { OutboxEventStatus } from "./events/outbox-event-status";
-export { canTransitionOutboxStatus, outboxEventStatuses } from "./events/outbox-event-status";
+export {
+  canTransitionOutboxStatus,
+  outboxEventStatuses,
+} from "./events/outbox-event-status";
 
-export type { Organization, OrganizationMetadata } from "./organization/organization";
+export type {
+  Organization,
+  OrganizationMetadata,
+} from "./organization/organization";
 export {
   assertRootRules,
   normalizeOrganizationCode,
   normalizeOrganizationName,
-  validateActivePeriod
+  validateActivePeriod,
 } from "./organization/organization";
 export {
   buildOrganizationPath,
   canContain,
   isAllowedParentChild,
   isDescendantPath,
-  replacePathPrefix
+  replacePathPrefix,
 } from "./organization/organization-hierarchy";
 export { OrganizationDomainError } from "./organization/organization-errors";
 export type { OrganizationStatus } from "./organization/organization-status";
@@ -46,19 +52,31 @@ export type { OrganizationType } from "./organization/organization-type";
 export {
   isSlice1CreatableType,
   organizationTypes,
-  slice1CreatableOrganizationTypes
+  slice1CreatableOrganizationTypes,
 } from "./organization/organization-type";
 export type { Account, AccountStatus } from "./identity/account";
 export { isActiveAccount } from "./identity/account";
 export type {
   Person,
   PersonClassification,
-  PersonStatus
+  PersonStatus,
 } from "./identity/person";
 export { displayNameFor } from "./identity/person";
 export type {
+  Membership,
+  MembershipStatus,
+  ScoutProfile,
+  ScoutProfileSex,
+} from "./member";
+export {
+  isTerritorialMembershipOrganizationType,
+  isValidScoutId,
+  normalizeScoutId,
+  territorialMembershipOrganizationTypes,
+} from "./member";
+export type {
   AccountInvitation,
-  AccountInvitationStatus
+  AccountInvitationStatus,
 } from "./identity/invitation";
 export { canProvisionInvitation } from "./identity/invitation";
 export type {
@@ -66,13 +84,13 @@ export type {
   RoleAssignment,
   RoleCode,
   RoleScopeType,
-  Slice2RoleScopeRule
+  Slice2RoleScopeRule,
 } from "./authorization/role";
 export {
   deriveSlice2ScopeType,
   getSlice2RoleScopeRule,
   isRoleAssignmentActive,
-  isSlice2GrantableRole
+  isSlice2GrantableRole,
 } from "./authorization/role";
 export type { Project } from "./project/project";
 export {
@@ -81,7 +99,7 @@ export {
   buildProjectCode,
   normalizeOptionalProjectText,
   normalizeProjectTitle,
-  validateProjectDateRange
+  validateProjectDateRange,
 } from "./project/project";
 export { ProjectDomainError } from "./project/project-errors";
 export type { ProjectMode } from "./project/project-mode";
@@ -91,7 +109,7 @@ export { projectStatuses } from "./project/project-status";
 export type { ProjectVisibility } from "./project/project-visibility";
 export {
   isSlice3MutableProjectVisibility,
-  projectVisibilities
+  projectVisibilities,
 } from "./project/project-visibility";
 export type {
   ApprovalDecision,
@@ -101,7 +119,7 @@ export type {
   ApprovalWorkflow,
   ProjectCommentFieldKey,
   ProjectCommentKind,
-  Slice4ProjectTransition
+  Slice4ProjectTransition,
 } from "./project/project-workflow";
 export {
   assertProjectCommentShape,
@@ -110,7 +128,7 @@ export {
   normalizeReviewText,
   projectCommentFieldKeys,
   slice4EditableProjectStatuses,
-  slice4ProjectTransitions
+  slice4ProjectTransitions,
 } from "./project/project-workflow";
 export type {
   EvidenceClassification,
@@ -120,7 +138,7 @@ export type {
   EvidenceType,
   EvidenceUploadStatus,
   EvidenceValidationStatus,
-  EvidenceVisibility
+  EvidenceVisibility,
 } from "./evidence/evidence";
 export * from "./governance";
 export {
@@ -140,5 +158,5 @@ export {
   evidenceMaxPdfBytes,
   evidenceUploadUrlTtlSeconds,
   normalizeEvidenceDescription,
-  normalizeEvidenceTitle
+  normalizeEvidenceTitle,
 } from "./evidence/evidence";

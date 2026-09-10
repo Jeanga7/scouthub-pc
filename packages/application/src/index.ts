@@ -85,6 +85,18 @@ export type {
   PositionRepository,
   PositionTransaction,
 } from "./ports/governance-repository";
+export type {
+  CreateMemberRecord,
+  MemberAggregateView,
+  MemberDetailView,
+  MemberListInput,
+  MemberListPage,
+  MemberOrganizationRef,
+  MemberRepository,
+  MemberSummaryView,
+  MemberTransaction,
+  UpdateMemberRecord,
+} from "./ports/member-repository";
 export {
   ApplicationError,
   ConflictError,
@@ -93,6 +105,7 @@ export {
 } from "./organization/errors";
 export type {
   AuditEventInput,
+  MemberAuditAction,
   OrganizationAuditAction,
   RequestContext,
 } from "./organization/audit";
@@ -138,3 +151,11 @@ export {
   GovernancePersonDirectoryUseCases,
   PositionUseCases,
 } from "./governance/use-cases";
+export {
+  MemberUseCases,
+  type CreateMemberInput,
+  type ListMembersInput,
+  type ReadMemberInput,
+  type TransferMemberInput,
+  type UpdateMemberInput,
+} from "./member/use-cases";

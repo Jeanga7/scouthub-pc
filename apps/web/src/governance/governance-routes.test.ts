@@ -14,6 +14,9 @@ vi.mock("@/governance/service", () => ({
 vi.mock("@/organizations/service", () => ({
   createOrganizationUseCases: vi.fn(),
 }));
+vi.mock("@/members/service", () => ({
+  createMemberUseCases: vi.fn(),
+}));
 import { requireActor } from "@/identity/http";
 import {
   createAppointmentUseCases,
@@ -21,6 +24,7 @@ import {
   createPositionUseCases,
 } from "@/governance/service";
 import { createOrganizationUseCases } from "@/organizations/service";
+import { createMemberUseCases } from "@/members/service";
 import {
   GET as GET_POSITIONS,
   POST as POST_POSITION,
@@ -151,6 +155,23 @@ beforeEach(() => {
       tenantId,
       type: "REGION",
       path: `/${tenantId}/${regionId}/`,
+    }),
+  } as never);
+  vi.mocked(createMemberUseCases).mockReturnValue({
+    listMembers: vi.fn().mockResolvedValue({
+      items: [
+        {
+          personId,
+          tenantId,
+          scoutId: "PC-000001",
+          displayName: "Personne sans compte",
+          status: "ACTIVE",
+          currentOrganization: null,
+          branch: null,
+          primaryAppointment: null,
+        },
+      ],
+      total: 1,
     }),
   } as never);
 });

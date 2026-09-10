@@ -246,6 +246,7 @@ export async function seedDevelopmentOrganizations(databaseUrl) {
       );
     }
     await seedDemoPersonas(pool);
+    await seedDemoMembers(pool);
     await seedDemoProjects(pool);
     await seedDemoGovernance(pool);
     await pool.query("COMMIT");
@@ -334,6 +335,96 @@ async function seedDemoPersonas(pool) {
       ON CONFLICT (id) DO NOTHING`,
       [assignmentId, alpha.nso, accountId, scopeType, scopeOrgId, roleCode],
     );
+  }
+}
+
+async function seedDemoMembers(pool) {
+  const structures = [
+    [alpha.unitJaune, "Jaune"],
+    [alpha.unitVerte, "Verte"],
+    [alpha.unitRouge, "Rouge"],
+    [alpha.unitLouveteaux, "Jaune"],
+    [alpha.unitEclaireurs, "Verte"],
+    [alpha.unitRoutiers, "Rouge"],
+    [alpha.groupTeranga, null],
+  ];
+  const names = [
+    ["Awa", "Ndiaye"],
+    ["Ibrahima", "Ba"],
+    ["Mariama", "Cisse"],
+    ["Cheikh", "Kane"],
+    ["Sokhna", "Gueye"],
+    ["Ousmane", "Seck"],
+    ["Ndeye", "Sow"],
+    ["Abdou", "Thiam"],
+    ["Mame", "Faye"],
+    ["Binta", "Sy"],
+    ["Modou", "Diouf"],
+    ["Adama", "Lo"],
+  ];
+  const people = [
+    [demo.adminPerson, "Aminata", "Diop", alpha.region, "FEMALE", true],
+    [demo.ownerPerson, "Moussa", "Fall", alpha.groupBaobab, "MALE", true],
+    [demo.reviewerPerson, "Fatou", "Sarr", alpha.district, "FEMALE", true],
+  ];
+  for (let index = 0; index < 36; index += 1) {
+    const [firstName, lastName] = names[index % names.length];
+    const [organizationId, branch] = structures[index % structures.length];
+    people.push([
+      `81000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+      firstName,
+      lastName,
+      organizationId,
+      index % 2 === 0 ? "FEMALE" : "MALE",
+      false,
+      branch,
+    ]);
+  }
+  let scoutNumber = 1;
+  for (const [
+    personId,
+    firstName,
+    lastName,
+    organizationId,
+    sex,
+    linked,
+    branch,
+  ] of people) {
+    await pool.query(
+      `INSERT INTO person (id, tenant_id, first_name, last_name, display_name, birth_date, status)
+       VALUES ($1,$2,$3,$4,$5,$6,'ACTIVE')
+       ON CONFLICT (id) DO UPDATE SET display_name = EXCLUDED.display_name, status = 'ACTIVE'`,
+      [
+        personId,
+        alpha.nso,
+        firstName,
+        lastName,
+        `${firstName} ${lastName}`,
+        `2010-0${(scoutNumber % 8) + 1}-15`,
+      ],
+    );
+    await pool.query(
+      `INSERT INTO scout_profile (tenant_id, person_id, scout_id, sex, primary_phone, email, joined_scouting_at)
+       VALUES ($1,$2,$3,$4,$5,$6,'2022-01-15T00:00:00Z')
+       ON CONFLICT (person_id) DO UPDATE SET sex = EXCLUDED.sex, primary_phone = EXCLUDED.primary_phone, email = EXCLUDED.email`,
+      [
+        alpha.nso,
+        personId,
+        `PC-${String(scoutNumber).padStart(6, "0")}`,
+        sex,
+        linked ? "77000000" : null,
+        linked
+          ? `${String(firstName).toLowerCase()}.${String(lastName).toLowerCase()}@demo.scouthub.test`
+          : null,
+      ],
+    );
+    await pool.query(
+      `INSERT INTO membership (tenant_id, person_id, organization_id, status, starts_at, branch)
+       VALUES ($1,$2,$3,'ACTIVE','2024-01-15T00:00:00Z',$4)
+       ON CONFLICT (tenant_id, person_id) WHERE status = 'ACTIVE' DO UPDATE SET organization_id = EXCLUDED.organization_id, branch = EXCLUDED.branch`,
+      [alpha.nso, personId, organizationId, branch ?? null],
+    );
+    scoutNumber += 1;
   }
 }
 

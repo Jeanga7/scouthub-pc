@@ -2,7 +2,7 @@ export const organizationAuditActions = [
   "organization.created",
   "organization.updated",
   "organization.moved",
-  "organization.activated"
+  "organization.activated",
 ] as const;
 
 export const identityAuditActions = [
@@ -15,7 +15,7 @@ export const identityAuditActions = [
   "identity.account_suspended",
   "identity.role_assigned",
   "identity.role_revoked",
-  "identity.login_denied_suspended"
+  "identity.login_denied_suspended",
 ] as const;
 
 export const projectAuditActions = [
@@ -26,7 +26,7 @@ export const projectAuditActions = [
   "project.comment_added",
   "project.changes_requested",
   "project.approved_for_execution",
-  "project.rejected"
+  "project.rejected",
 ] as const;
 
 export const evidenceAuditActions = [
@@ -34,14 +34,28 @@ export const evidenceAuditActions = [
   "evidence.upload_verified",
   "evidence.upload_rejected",
   "evidence.created",
-  "evidence.download_url_issued"
+  "evidence.download_url_issued",
+] as const;
+
+export const memberAuditActions = [
+  "member.created",
+  "member.updated",
+  "membership.started",
+  "membership.ended",
+  "membership.transferred",
 ] as const;
 
 export type OrganizationAuditAction = (typeof organizationAuditActions)[number];
 export type IdentityAuditAction = (typeof identityAuditActions)[number];
 export type ProjectAuditAction = (typeof projectAuditActions)[number];
 export type EvidenceAuditAction = (typeof evidenceAuditActions)[number];
-export type AuditAction = OrganizationAuditAction | IdentityAuditAction | ProjectAuditAction | EvidenceAuditAction;
+export type MemberAuditAction = (typeof memberAuditActions)[number];
+export type AuditAction =
+  | OrganizationAuditAction
+  | IdentityAuditAction
+  | ProjectAuditAction
+  | EvidenceAuditAction
+  | MemberAuditAction;
 export type AuditActorKind = "SYSTEM" | "USER" | "SERVICE";
 
 export interface AuditActor {
@@ -52,7 +66,15 @@ export interface AuditActor {
 export interface AuditEventInput {
   readonly id: string;
   readonly tenantId: string;
-  readonly resourceType: "organization" | "account" | "invitation" | "role_assignment" | "project" | "evidence";
+  readonly resourceType:
+    | "organization"
+    | "account"
+    | "invitation"
+    | "role_assignment"
+    | "project"
+    | "evidence"
+    | "member"
+    | "membership";
   readonly resourceId: string;
   readonly action: AuditAction;
   readonly actorKind: AuditActorKind;
@@ -78,7 +100,7 @@ export function createOrganizationAuditEvent(input: {
 }): AuditEventInput {
   return createAuditEvent({
     ...input,
-    resourceType: "organization"
+    resourceType: "organization",
   });
 }
 
@@ -103,6 +125,6 @@ export function createAuditEvent(input: {
     actorId: actor.id,
     requestId: input.requestId ?? null,
     metadata: input.metadata,
-    occurredAt: new Date()
+    occurredAt: new Date(),
   };
 }

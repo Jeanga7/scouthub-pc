@@ -10,7 +10,7 @@ import {
   mapGovernancePersonOption,
 } from "@/governance/http";
 import { ApplicationError } from "@scouthub/application";
-import { createGovernancePersonDirectoryUseCases } from "@/governance/service";
+import { createMemberUseCases } from "@/members/service";
 
 export const dynamic = "force-dynamic";
 
@@ -23,11 +23,26 @@ export async function GET(request: Request) {
     );
     if (!canSearchGovernancePeople(actor, tenantId))
       throw new ApplicationError("Permission denied.", "AUTHZ_DENIED", 403);
-    const people = await createGovernancePersonDirectoryUseCases().searchPeople(
+    const people = await createMemberUseCases().listMembers({
+      actor,
       tenantId,
-      q ?? null,
+      query: q ?? null,
+      filterOrganizationIds: [],
+      branch: null,
+      status: "ACTIVE",
+      page: 1,
+      pageSize: 25,
+    });
+    return jsonResponse(
+      people.items.map((item) =>
+        mapGovernancePersonOption({
+          id: item.personId,
+          tenantId: item.tenantId,
+          displayName: item.displayName,
+        }),
+      ),
+      rid,
     );
-    return jsonResponse(people.map(mapGovernancePersonOption), rid);
   } catch (error) {
     return handleRouteError(error, rid);
   }
