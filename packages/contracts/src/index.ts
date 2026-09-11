@@ -77,7 +77,195 @@ export const permissionCodeSchema = z.enum([
   "appointment.create",
   "appointment.validate",
   "appointment.end",
+  "member.read",
+  "member.read_sensitive",
+  "member.create",
+  "member.update",
+  "member.transfer",
 ]);
+
+export const scoutProfileSexSchema = z.enum(["FEMALE", "MALE", "UNSPECIFIED"]);
+export const membershipStatusSchema = z.enum(["ACTIVE", "ENDED"]);
+export const memberStatusSchema = z.enum(["ACTIVE", "INACTIVE", "ANONYMIZED"]);
+
+export const memberSummarySchema = z.object({
+  personId: uuidSchema,
+  tenantId: uuidSchema,
+  scoutId: z.string(),
+  displayName: z.string(),
+  status: memberStatusSchema,
+  currentOrganization: z
+    .object({
+      id: uuidSchema,
+      name: z.string(),
+      type: organizationTypeSchema,
+      path: z.string(),
+    })
+    .nullable(),
+  branch: z.string().nullable(),
+  primaryAppointment: z
+    .object({
+      title: z.string(),
+      scopeName: z.string(),
+    })
+    .nullable(),
+});
+export type MemberSummary = z.infer<typeof memberSummarySchema>;
+
+export const membershipResponseSchema = z.object({
+  id: uuidSchema,
+  tenantId: uuidSchema,
+  personId: uuidSchema,
+  organizationId: uuidSchema,
+  organizationName: z.string().optional(),
+  organizationType: organizationTypeSchema.optional(),
+  organizationPath: z.string().optional(),
+  status: membershipStatusSchema,
+  startsAt: z.iso.datetime(),
+  endsAt: z.iso.datetime().nullable(),
+  branch: z.string().nullable(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+});
+export type MembershipResponse = z.infer<typeof membershipResponseSchema>;
+
+export const memberDetailSchema = memberSummarySchema.extend({
+  firstName: z.string(),
+  lastName: z.string(),
+  birthDate: z.iso.datetime().nullable(),
+  birthPlace: z.string().nullable(),
+  sex: scoutProfileSexSchema,
+  primaryPhone: z.string().nullable().optional(),
+  secondaryPhone: z.string().nullable().optional(),
+  email: z.string().nullable().optional(),
+  guardianName: z.string().nullable().optional(),
+  guardianPhone: z.string().nullable().optional(),
+  guardianRelationship: z.string().nullable().optional(),
+  insuranceNumber: z.string().nullable().optional(),
+  insuranceYear: z.number().int().nullable().optional(),
+  joinedScoutingAt: z.iso.datetime().nullable(),
+  administrativeNotes: z.string().nullable().optional(),
+  accountLinked: z.boolean(),
+  memberships: z.array(membershipResponseSchema),
+  activeAppointments: z.array(
+    z.object({
+      id: uuidSchema,
+      title: z.string(),
+      scopeName: z.string(),
+      startsAt: z.iso.datetime(),
+      endsAt: z.iso.datetime().nullable(),
+    }),
+  ),
+  ancestors: z.array(
+    z.object({
+      id: uuidSchema,
+      name: z.string(),
+      type: organizationTypeSchema,
+    }),
+  ),
+});
+export type MemberDetail = z.infer<typeof memberDetailSchema>;
+
+export const memberListQuerySchema = z
+  .object({
+    tenantId: uuidSchema,
+    q: z.string().max(120).optional(),
+    districtId: uuidSchema.optional(),
+    groupId: uuidSchema.optional(),
+    annexId: uuidSchema.optional(),
+    unitId: uuidSchema.optional(),
+    branch: z.string().max(80).optional(),
+    status: z.enum(["ACTIVE", "INACTIVE"]).optional(),
+    page: z.coerce.number().int().positive().max(10000).optional(),
+    pageSize: z.coerce.number().int().positive().max(50).optional(),
+  })
+  .strict();
+
+export const memberListResponseSchema = z.object({
+  items: z.array(memberSummarySchema),
+  page: z.number().int().positive(),
+  pageSize: z.number().int().positive(),
+  total: z.number().int().nonnegative(),
+});
+export type MemberListResponse = z.infer<typeof memberListResponseSchema>;
+
+export const createMemberRequestSchema = z
+  .object({
+    tenantId: uuidSchema,
+    firstName: z.string().min(1).max(120),
+    lastName: z.string().min(1).max(120),
+    birthDate: z.iso.datetime().nullable(),
+    birthPlace: z.string().max(160).nullable().optional(),
+    sex: scoutProfileSexSchema,
+    primaryPhone: z.string().max(60).nullable().optional(),
+    secondaryPhone: z.string().max(60).nullable().optional(),
+    email: z.email().max(160).nullable().optional(),
+    guardianName: z.string().max(160).nullable().optional(),
+    guardianPhone: z.string().max(60).nullable().optional(),
+    guardianRelationship: z.string().max(80).nullable().optional(),
+    organizationId: uuidSchema,
+    startsAt: z.iso.datetime(),
+    branch: z.string().max(80).nullable().optional(),
+    insuranceNumber: z.string().max(80).nullable().optional(),
+    insuranceYear: z.number().int().min(2000).max(2100).nullable().optional(),
+    joinedScoutingAt: z.iso.datetime().nullable().optional(),
+    administrativeNotes: z.string().max(1000).nullable().optional(),
+  })
+  .strict();
+export type CreateMemberRequest = z.infer<typeof createMemberRequestSchema>;
+
+export const updateMemberRequestSchema = z
+  .object({
+    tenantId: uuidSchema,
+    firstName: z.string().min(1).max(120).optional(),
+    lastName: z.string().min(1).max(120).optional(),
+    birthDate: z.iso.datetime().nullable().optional(),
+    birthPlace: z.string().max(160).nullable().optional(),
+    sex: scoutProfileSexSchema.optional(),
+    primaryPhone: z.string().max(60).nullable().optional(),
+    secondaryPhone: z.string().max(60).nullable().optional(),
+    email: z.email().max(160).nullable().optional(),
+    guardianName: z.string().max(160).nullable().optional(),
+    guardianPhone: z.string().max(60).nullable().optional(),
+    guardianRelationship: z.string().max(80).nullable().optional(),
+    insuranceNumber: z.string().max(80).nullable().optional(),
+    insuranceYear: z.number().int().min(2000).max(2100).nullable().optional(),
+    joinedScoutingAt: z.iso.datetime().nullable().optional(),
+    administrativeNotes: z.string().max(1000).nullable().optional(),
+    status: z.enum(["ACTIVE", "INACTIVE"]).optional(),
+  })
+  .strict();
+export type UpdateMemberRequest = z.infer<typeof updateMemberRequestSchema>;
+
+export const transferMemberRequestSchema = z
+  .object({
+    tenantId: uuidSchema,
+    organizationId: uuidSchema,
+    startsAt: z.iso.datetime(),
+    branch: z.string().max(80).nullable().optional(),
+  })
+  .strict();
+export type TransferMemberRequest = z.infer<typeof transferMemberRequestSchema>;
+
+export const memberAggregateSchema = z.object({
+  totalActive: z.number().int().nonnegative(),
+  bySex: z.array(
+    z.object({
+      sex: scoutProfileSexSchema,
+      count: z.number().int().nonnegative(),
+    }),
+  ),
+  byBranch: z.array(
+    z.object({ branch: z.string(), count: z.number().int().nonnegative() }),
+  ),
+  byOrganizationType: z.array(
+    z.object({
+      type: organizationTypeSchema,
+      count: z.number().int().nonnegative(),
+    }),
+  ),
+});
+export type MemberAggregate = z.infer<typeof memberAggregateSchema>;
 
 export const holderPolicySchema = z.enum(["SINGLE", "MULTIPLE"]);
 export const positionResponseSchema = z.object({

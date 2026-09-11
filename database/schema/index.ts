@@ -195,6 +195,17 @@ export const personStatus = pgEnum("person_status", [
   "ANONYMIZED",
 ]);
 
+export const scoutProfileSex = pgEnum("scout_profile_sex", [
+  "FEMALE",
+  "MALE",
+  "UNSPECIFIED",
+]);
+
+export const membershipStatus = pgEnum("membership_status", [
+  "ACTIVE",
+  "ENDED",
+]);
+
 export const appointmentStatus = pgEnum("appointment_status", [
   "PENDING",
   "ACTIVE",
@@ -436,6 +447,117 @@ export const accountPersonLink = pgTable(
     })
       .onDelete("restrict")
       .onUpdate("restrict"),
+  ],
+);
+
+export const scoutProfile = pgTable(
+  "scout_profile",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    personId: uuid("person_id").notNull(),
+    scoutId: text("scout_id").notNull(),
+    sex: scoutProfileSex("sex").notNull().default("UNSPECIFIED"),
+    birthPlace: text("birth_place"),
+    primaryPhone: text("primary_phone"),
+    secondaryPhone: text("secondary_phone"),
+    email: text("email"),
+    guardianName: text("guardian_name"),
+    guardianPhone: text("guardian_phone"),
+    guardianRelationship: text("guardian_relationship"),
+    insuranceNumber: text("insurance_number"),
+    insuranceYear: integer("insurance_year"),
+    joinedScoutingAt: timestamp("joined_scouting_at", { withTimezone: true }),
+    administrativeNotes: text("administrative_notes"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("scout_profile_id_tenant_unique").on(table.id, table.tenantId),
+    unique("scout_profile_person_unique").on(table.personId),
+    unique("scout_profile_tenant_scout_id_unique").on(
+      table.tenantId,
+      table.scoutId,
+    ),
+    foreignKey({
+      columns: [table.tenantId],
+      foreignColumns: [organization.id],
+      name: "scout_profile_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.personId, table.tenantId],
+      foreignColumns: [person.id, person.tenantId],
+      name: "scout_profile_person_tenant_fk",
+    }).onDelete("restrict"),
+    index("scout_profile_tenant_idx").on(table.tenantId),
+    index("scout_profile_scout_id_idx").on(table.tenantId, table.scoutId),
+    check(
+      "scout_profile_scout_id_shape",
+      sql`${table.scoutId} ~ '^PC-[0-9]{6,}$'`,
+    ),
+    check(
+      "scout_profile_insurance_year_shape",
+      sql`${table.insuranceYear} IS NULL OR ${table.insuranceYear} BETWEEN 2000 AND 2100`,
+    ),
+  ],
+);
+
+export const membership = pgTable(
+  "membership",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    personId: uuid("person_id").notNull(),
+    organizationId: uuid("organization_id").notNull(),
+    status: membershipStatus("status").notNull().default("ACTIVE"),
+    startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+    endsAt: timestamp("ends_at", { withTimezone: true }),
+    branch: text("branch"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("membership_id_tenant_unique").on(table.id, table.tenantId),
+    foreignKey({
+      columns: [table.tenantId],
+      foreignColumns: [organization.id],
+      name: "membership_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.personId, table.tenantId],
+      foreignColumns: [person.id, person.tenantId],
+      name: "membership_person_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.organizationId, table.tenantId],
+      foreignColumns: [organization.id, organization.tenantId],
+      name: "membership_organization_tenant_fk",
+    }).onDelete("restrict"),
+    uniqueIndex("membership_one_active_per_person_idx")
+      .on(table.tenantId, table.personId)
+      .where(sql`${table.status} = 'ACTIVE'`),
+    index("membership_person_idx").on(table.tenantId, table.personId),
+    index("membership_organization_idx").on(
+      table.tenantId,
+      table.organizationId,
+    ),
+    index("membership_status_idx").on(table.tenantId, table.status),
+    check(
+      "membership_dates_valid",
+      sql`${table.endsAt} IS NULL OR ${table.startsAt} < ${table.endsAt}`,
+    ),
+    check(
+      "membership_active_end_shape",
+      sql`(${table.status} = 'ACTIVE' AND ${table.endsAt} IS NULL) OR (${table.status} = 'ENDED' AND ${table.endsAt} IS NOT NULL)`,
+    ),
   ],
 );
 

@@ -42,7 +42,12 @@ export type PermissionCode =
   | "appointment.read"
   | "appointment.create"
   | "appointment.validate"
-  | "appointment.end";
+  | "appointment.end"
+  | "member.read"
+  | "member.read_sensitive"
+  | "member.create"
+  | "member.update"
+  | "member.transfer";
 
 export type RoleScopeType =
   "OWN" | "UNIT" | "GROUP" | "DISTRICT" | "REGION" | "NATIONAL" | "GLOBAL_TECH";

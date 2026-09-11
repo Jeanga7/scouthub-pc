@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { headers } from "next/headers";
+import type { UrlObject } from "url";
 import {
   AppShell,
   Breadcrumb,
@@ -17,6 +18,7 @@ import {
   createAppointmentUseCases,
   createPositionUseCases,
 } from "@/governance/service";
+import { createMemberUseCases } from "@/members/service";
 
 export const dynamic = "force-dynamic";
 
@@ -71,6 +73,27 @@ export default async function StructureDetailPage({
           item.scopeOrgId === organization.id && item.status === "ACTIVE",
       )
     : [];
+  const canReadMembers = actor.assignments.some(
+    (item) =>
+      item.tenantId === assignment.tenantId &&
+      item.scopePath !== null &&
+      organization.path.startsWith(item.scopePath) &&
+      item.permissions.includes("member.read") &&
+      isRoleAssignmentActive(item, new Date()),
+  );
+  const memberStats = canReadMembers
+    ? await createMemberUseCases().aggregateMembers(
+        actor,
+        assignment.tenantId,
+        {
+          id: organization.id,
+          tenantId: organization.tenantId,
+          name: organization.name,
+          type: organization.type,
+          path: organization.path,
+        },
+      )
+    : null;
   const positions = await createPositionUseCases().listPositions(
     assignment.tenantId,
   );
@@ -132,6 +155,35 @@ export default async function StructureDetailPage({
           </section>
         </section>
         <section className="structure-section">
+          <div className="section-heading-row">
+            <h2>Membres</h2>
+            {memberStats ? (
+              <Link href={membersHref(organization)}>
+                Voir tous les membres
+              </Link>
+            ) : null}
+          </div>
+          {memberStats ? (
+            <div className="member-stats-grid">
+              <div className="sh-card stat-tile">
+                <span>Total actifs</span>
+                <strong>{memberStats.totalActive}</strong>
+              </div>
+              {memberStats.byBranch.map((item) => (
+                <div className="sh-card stat-tile" key={item.branch}>
+                  <span>{item.branch}</span>
+                  <strong>{item.count}</strong>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <EmptyState
+              title="Membres non accessibles"
+              description="Les statistiques membres ne sont pas disponibles avec vos permissions."
+            />
+          )}
+        </section>
+        <section className="structure-section">
           <h2>Responsables / Maîtrise</h2>
           {appointments.length ? (
             <div className="structure-grid">
@@ -162,6 +214,24 @@ export default async function StructureDetailPage({
       </main>
     </AppShell>
   );
+}
+
+function membersHref(organization: OrganizationResponse): UrlObject {
+  switch (organization.type) {
+    case "DISTRICT":
+      return {
+        pathname: "/app/members",
+        query: { districtId: organization.id },
+      };
+    case "GROUP":
+      return { pathname: "/app/members", query: { groupId: organization.id } };
+    case "ANNEX":
+      return { pathname: "/app/members", query: { annexId: organization.id } };
+    case "UNIT":
+      return { pathname: "/app/members", query: { unitId: organization.id } };
+    default:
+      return { pathname: "/app/members" };
+  }
 }
 
 async function loadStructure(

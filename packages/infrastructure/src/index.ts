@@ -33,6 +33,7 @@ export {
   createPgGovernancePersonDirectoryRepository,
   createPgPositionRepository,
 } from "./database/governance-repository";
+export { createPgMemberRepository } from "./database/member-repository";
 export {
   createPgOutboxRepository,
   PgOutboxRepository,
