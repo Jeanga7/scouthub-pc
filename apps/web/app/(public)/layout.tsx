@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
+import React from "react";
 import Link from "next/link";
-import { headers } from "next/headers";
+import { cookies } from "next/headers";
 import { LOCAL_PERSONA_COOKIE } from "@scouthub/infrastructure";
 import { isLocalIdentityMode } from "@/identity/local-mode";
 import { PublicAuthCta } from "./public-auth-cta";
@@ -11,8 +12,9 @@ export default async function PublicLayout({
   readonly children: ReactNode;
 }) {
   const local = isLocalIdentityMode(process.env);
-  const cookie = (await headers()).get("cookie") ?? "";
-  const localAuthenticated = cookie.includes(`${LOCAL_PERSONA_COOKIE}=`);
+  const cookieStore = await cookies();
+  const localAuthenticated =
+    cookieStore.get(LOCAL_PERSONA_COOKIE) !== undefined;
 
   return (
     <div className="public-shell">

@@ -4,7 +4,14 @@ import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
 
 export function ClerkAuthCta() {
-  const { isSignedIn } = useAuth();
+  const { isLoaded, isSignedIn } = useAuth();
+  if (!isLoaded) {
+    return (
+      <span className="public-auth-cta" aria-live="polite" aria-busy="true">
+        Chargement...
+      </span>
+    );
+  }
   const label = isSignedIn === true ? "Ouvrir ScoutHub" : "Se connecter";
 
   return (
