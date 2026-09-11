@@ -562,7 +562,10 @@ const memberSummarySql = `
     FROM appointment a
     JOIN position pos ON pos.id = a.position_id AND pos.tenant_id = a.tenant_id
     JOIN organization org ON org.id = a.scope_org_id AND org.tenant_id = a.tenant_id
-    WHERE a.tenant_id = p.tenant_id AND a.person_id = p.id AND a.status = 'ACTIVE'
+    WHERE a.tenant_id = p.tenant_id
+      AND a.person_id = p.id
+      AND a.status = 'ACTIVE'
+      AND org.path LIKE ANY($2::text[])
     ORDER BY a.starts_at DESC
     LIMIT 1
   ) primary_appt ON TRUE

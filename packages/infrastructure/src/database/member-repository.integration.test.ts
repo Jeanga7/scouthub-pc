@@ -16,6 +16,7 @@ const unitId = "c1000000-0000-4000-8000-000000000006";
 const personId = "c1000000-0000-4000-8000-000000000007";
 const accountId = "c1000000-0000-4000-8000-000000000008";
 const districtBId = "c1000000-0000-4000-8000-000000000009";
+const positionId = "c1000000-0000-4000-8000-000000000010";
 const pool = new pg.Pool({ connectionString: databaseUrl, max: 25 });
 const repository = createPgMemberRepository(databaseUrl);
 const memberUseCases: MemberUseCases = new MemberUseCasesImpl(repository, {
@@ -107,12 +108,18 @@ beforeAll(async () => {
     ],
   );
   await pool.query(
+    "INSERT INTO position (id, tenant_id, code, title, allowed_scope_types, active) VALUES ($1,$2,'TEST-LEAD','Test lead','[\"GROUP\",\"UNIT\"]',true) ON CONFLICT (id) DO NOTHING",
+    [positionId, tenantId],
+  );
+  await pool.query(
     "INSERT INTO person (id, tenant_id, first_name, last_name, display_name) VALUES ($1,$2,'Test','Member','Test Member') ON CONFLICT (id) DO NOTHING",
     [personId, tenantId],
   );
 });
 
 afterAll(async () => {
+  await pool.query("DELETE FROM appointment WHERE tenant_id = $1", [tenantId]);
+  await pool.query("DELETE FROM position WHERE tenant_id = $1", [tenantId]);
   await pool.query("DELETE FROM scout_profile WHERE tenant_id = $1", [
     tenantId,
   ]);
@@ -123,6 +130,142 @@ afterAll(async () => {
 });
 
 describe("member registry PostgreSQL invariants", () => {
+  async function addActiveAppointment(
+    personId: string,
+    scopeOrgId: string,
+    startsAt: string,
+  ): Promise<void> {
+    await pool.query(
+      `INSERT INTO appointment
+       (id, tenant_id, person_id, position_id, scope_org_id, status, starts_at, proposed_by)
+       VALUES ($1, $2, $3, $4, $5, 'ACTIVE', $6, $7)`,
+      [
+        crypto.randomUUID(),
+        tenantId,
+        personId,
+        positionId,
+        scopeOrgId,
+        startsAt,
+        accountId,
+      ],
+    );
+  }
+
+  it("exposes primary appointments only from visible scopes in lists and details", async () => {
+    const member = await memberUseCases.createMember({
+      actor: actor("REGION", regionId),
+      requestId: crypto.randomUUID(),
+      tenantId,
+      firstName: "Appointment",
+      lastName: "Scoped",
+      birthDate: null,
+      birthPlace: null,
+      sex: "UNSPECIFIED",
+      primaryPhone: null,
+      secondaryPhone: null,
+      email: null,
+      guardianName: null,
+      guardianPhone: null,
+      guardianRelationship: null,
+      organizationId: groupAId,
+      startsAt: new Date("2024-01-01T00:00:00Z"),
+      branch: null,
+      insuranceNumber: null,
+      insuranceYear: null,
+      joinedScoutingAt: null,
+      administrativeNotes: null,
+    });
+    await addActiveAppointment(
+      member.personId,
+      groupBId,
+      "2025-01-01T00:00:00Z",
+    );
+    await addActiveAppointment(member.personId, unitId, "2024-01-01T00:00:00Z");
+    const groupList = await memberUseCases.listMembers({
+      actor: actor("GROUP", groupAId),
+      tenantId,
+      query: "Appointment Scoped",
+      filterOrganizationIds: [],
+      branch: null,
+      status: null,
+      page: 1,
+      pageSize: 25,
+    });
+    expect(groupList.items[0]?.primaryAppointment).toEqual({
+      title: "Test lead",
+      scopeName: "Test members unit",
+    });
+    const groupDetail = await memberUseCases.getMember({
+      actor: actor("GROUP", groupAId),
+      tenantId,
+      personId: member.personId,
+    });
+    expect(groupDetail.activeAppointments).toHaveLength(1);
+    expect(groupDetail.activeAppointments[0]?.scopePath).toContain(unitId);
+    expect(groupDetail.primaryAppointment).toEqual({
+      title: "Test lead",
+      scopeName: "Test members unit",
+    });
+    const regionalDetail = await memberUseCases.getMember({
+      actor: actor("REGION", regionId),
+      tenantId,
+      personId: member.personId,
+    });
+    expect(regionalDetail.activeAppointments).toHaveLength(2);
+    expect(regionalDetail.primaryAppointment?.scopeName).toBe(
+      "Test members group B",
+    );
+  });
+
+  it("returns no primary appointment when the only appointment is outside scope", async () => {
+    const member = await memberUseCases.createMember({
+      actor: actor("REGION", regionId),
+      requestId: crypto.randomUUID(),
+      tenantId,
+      firstName: "Appointment",
+      lastName: "Hidden",
+      birthDate: null,
+      birthPlace: null,
+      sex: "UNSPECIFIED",
+      primaryPhone: null,
+      secondaryPhone: null,
+      email: null,
+      guardianName: null,
+      guardianPhone: null,
+      guardianRelationship: null,
+      organizationId: groupAId,
+      startsAt: new Date("2024-01-01T00:00:00Z"),
+      branch: null,
+      insuranceNumber: null,
+      insuranceYear: null,
+      joinedScoutingAt: null,
+      administrativeNotes: null,
+    });
+    await addActiveAppointment(
+      member.personId,
+      groupBId,
+      "2025-01-01T00:00:00Z",
+    );
+    const groupList = await memberUseCases.listMembers({
+      actor: actor("GROUP", groupAId),
+      tenantId,
+      query: "Appointment Hidden",
+      filterOrganizationIds: [],
+      branch: null,
+      status: null,
+      page: 1,
+      pageSize: 25,
+    });
+    expect(groupList.items[0]?.primaryAppointment).toBeNull();
+    const groupDetail = await memberUseCases.getMember({
+      actor: actor("GROUP", groupAId),
+      tenantId,
+      personId: member.personId,
+    });
+    expect(groupDetail.activeAppointments).toEqual([]);
+    expect(groupDetail.primaryAppointment).toBeNull();
+  });
+
   it("creates 20 complete members concurrently through the real use case", async () => {
     const created = await Promise.all(
       Array.from({ length: 20 }, (_, index) =>

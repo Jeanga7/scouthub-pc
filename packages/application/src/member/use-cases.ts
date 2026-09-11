@@ -384,7 +384,17 @@ function visibleMemberDetail(
   const activeAppointments = detail.activeAppointments.filter((appointment) =>
     scopePaths.some((path) => appointment.scopePath.startsWith(path)),
   );
-  const scoped = { ...detail, memberships, activeAppointments };
+  const scoped = {
+    ...detail,
+    memberships,
+    activeAppointments,
+    primaryAppointment: activeAppointments[0]
+      ? {
+          title: activeAppointments[0].title,
+          scopeName: activeAppointments[0].scopeName,
+        }
+      : null,
+  };
   return canReadSensitive(actor, tenantId, detail.currentOrganization)
     ? scoped
     : redactSensitive(scoped);
